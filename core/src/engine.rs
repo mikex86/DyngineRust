@@ -1,7 +1,6 @@
 use std::borrow::Cow;
 use std::rc::Rc;
-use egui::Rect;
-use egui_wgpu_backend::wgpu::TextureFormat;
+use wgpu::TextureFormat;
 use wgpu::{Color, CommandEncoder, Device};
 
 pub struct EngineCoreState {
@@ -12,6 +11,23 @@ pub struct EngineInstance {
     device: Rc<Device>,
     surface_format: wgpu::TextureFormat,
     engine_core_state: Option<EngineCoreState>
+}
+
+#[derive(Debug, PartialEq)]
+pub struct ViewportRegion {
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub height: f32,
+}
+
+impl ViewportRegion {
+    pub const ZERO: ViewportRegion = ViewportRegion {
+        x: 0.0,
+        y: 0.0,
+        width: 0.0,
+        height: 0.0,
+    };
 }
 
 impl EngineInstance {
@@ -53,7 +69,7 @@ impl EngineInstance {
         self.engine_core_state = Some(EngineCoreState { render_pipeline });
     }
 
-    pub fn render(&self, command_encoder: &mut CommandEncoder, surface_texture_view: &wgpu::TextureView, viewport_region: Rect) {
+    pub fn render(&self, command_encoder: &mut CommandEncoder, surface_texture_view: &wgpu::TextureView, viewport_region: &ViewportRegion) {
         let mut render_pass = command_encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: None,
             color_attachments: &[wgpu::RenderPassColorAttachment {
@@ -66,10 +82,10 @@ impl EngineInstance {
             }],
             depth_stencil_attachment: None,
         });
-        if viewport_region == Rect::NOTHING {
+        if viewport_region == &ViewportRegion::ZERO {
             return;
         }
-        render_pass.set_viewport(viewport_region.min.x, viewport_region.min.y, viewport_region.max.x, viewport_region.max.y, 0.0, 1.0);
+        render_pass.set_viewport(viewport_region.x, viewport_region.y, viewport_region.width, viewport_region.height, 0.0, 1.0);
 
         let engine_core_state = self.engine_core_state.as_ref().unwrap();
 

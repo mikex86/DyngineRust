@@ -1,17 +1,27 @@
-use std::ops::Sub;
+use std::collections::VecDeque;
 use std::rc::Rc;
-use egui::{CtxRef, Frame, Rect, Style, Vec2};
+use std::time::Duration;
+use egui::{CtxRef, Frame, Style, Vec2};
 use egui::{menu};
 use crate::i18n::Translator;
 
+use dyngine_core::engine::ViewportRegion;
+
 pub struct TestApp {
     translator: Rc<Translator>,
-    pub viewport_rect: Rect,
+    pub viewport_region: ViewportRegion,
+    pub frame_time: Duration,
+    pub fps_average_window: VecDeque<u32>
 }
 
 impl TestApp {
     pub fn new(translator: Rc<Translator>) -> Self {
-        return TestApp { translator, viewport_rect: Rect::NOTHING };
+        return TestApp {
+            translator,
+            viewport_region: ViewportRegion::ZERO,
+            frame_time: Duration::new(0, 0),
+            fps_average_window: VecDeque::new()
+        };
     }
 }
 
@@ -101,12 +111,30 @@ impl epi::App for TestApp {
                     });
             });
         egui::CentralPanel::default().show(ctx, |ui| {
+            // query available_size before the label is rendered, because we want it to overlay the viewport
             let viewport_size = ui.available_size();
+
+            // render FPS label with average FPS over a time window of 60 frames
+            let frame_time_nanos = self.frame_time.as_nanos();
+            if frame_time_nanos != 0 {
+                let fps = (1_000_000_000.0 / (frame_time_nanos as f64)) as u32;
+                self.fps_average_window.push_back(fps);
+                if self.fps_average_window.len() > 60 {
+                    self.fps_average_window.pop_front();
+                }
+                let fps_average = self.fps_average_window.iter().sum::<u32>() / self.fps_average_window.len() as u32;
+                ui.label(format!("FPS: {}", fps_average));
+            }
+
             let viewport_widget = egui::Label::new("");
             let response = ui.add_sized(viewport_size, viewport_widget);
             let response_rect = response.rect;
-            let viewport_rect = Rect::from_min_max(response_rect.min, response_rect.max.sub(response_rect.min).to_pos2());
-            self.viewport_rect = viewport_rect;
+            self.viewport_region = ViewportRegion {
+                x: response_rect.min.x,
+                y: response_rect.min.y,
+                width: response_rect.width(),
+                height: response_rect.height(),
+            }
         });
     }
 

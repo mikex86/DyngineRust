@@ -1,10 +1,9 @@
 mod gui;
 mod i18n;
-mod engine;
 
 use std::iter;
 use std::rc::Rc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use egui::{Color32, FontDefinitions, Style, TextStyle, Visuals};
 use egui::style::{Widgets, WidgetVisuals};
 use egui_wgpu_backend::{RenderPass, ScreenDescriptor};
@@ -21,7 +20,7 @@ use winit::event::{Event, WindowEvent};
 use winit::event::Event::UserEvent;
 use winit::event_loop::ControlFlow;
 use winit::window::{WindowBuilder};
-use crate::engine::EngineInstance;
+use dyngine_core::engine::EngineInstance;
 use crate::gui::TestApp;
 
 
@@ -44,13 +43,13 @@ async fn run(event_loop: EventLoop<ExampleEvent>, window: Window) {
     let size = window.inner_size();
     let instance = wgpu::Instance::new(wgpu::Backends::all());
 
-    let main_surface = unsafe { instance.create_surface(&window) };
+    let surface = unsafe { instance.create_surface(&window) };
 
     let adapter = instance
         .request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::HighPerformance,
             force_fallback_adapter: false,
-            compatible_surface: Some(&main_surface),
+            compatible_surface: Some(&surface),
         })
         .await
         .expect("Failed to find an appropriate adapter");
@@ -72,13 +71,13 @@ async fn run(event_loop: EventLoop<ExampleEvent>, window: Window) {
         queue = q;
     }
 
-    let surface_format = main_surface.get_preferred_format(&adapter).unwrap();
+    let surface_format = surface.get_preferred_format(&adapter).unwrap();
 
     let mut engine_instance = EngineInstance::new(device.clone(), surface_format);
 
     engine_instance.start();
 
-    let mut main_surface_config = wgpu::SurfaceConfiguration {
+    let mut surface_config = wgpu::SurfaceConfiguration {
         usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
         format: surface_format,
         width: size.width,
@@ -86,7 +85,7 @@ async fn run(event_loop: EventLoop<ExampleEvent>, window: Window) {
         present_mode: wgpu::PresentMode::Mailbox,
     };
 
-    main_surface.configure(&device, &main_surface_config);
+    surface.configure(&device, &surface_config);
 
     let repaint_signal = std::sync::Arc::new(ExampleRepaintSignal(std::sync::Mutex::new(
         event_loop.create_proxy(),
@@ -171,8 +170,11 @@ async fn run(event_loop: EventLoop<ExampleEvent>, window: Window) {
     let translator = Rc::new(crate::i18n::init_i18n("en-US".parse().unwrap()).unwrap());
     let mut egui_app = TestApp::new(translator);
 
-    let start_time = Instant::now();
-    let mut previous_frame_time = None;
+    let egui_start_time = Instant::now();
+    let mut previous_egui_frame_time = None;
+
+    let mut last_frame_end = Instant::now();
+    let mut last_frame_time = Duration::from_secs(0);
 
     event_loop.run(move |event, _, control_flow| {
         // event_loop.run never returns, therefore we must take ownership of the resources
@@ -188,9 +190,9 @@ async fn run(event_loop: EventLoop<ExampleEvent>, window: Window) {
             } => match event {
                 WindowEvent::Resized(size) => {
                     if size.width > 0 && size.height > 0 {
-                        main_surface_config.width = size.width;
-                        main_surface_config.height = size.height;
-                        main_surface.configure(&device, &main_surface_config);
+                        surface_config.width = size.width;
+                        surface_config.height = size.height;
+                        surface.configure(&device, &surface_config);
                     }
                 }
                 WindowEvent::CloseRequested => {
@@ -199,7 +201,7 @@ async fn run(event_loop: EventLoop<ExampleEvent>, window: Window) {
                 _ => {}
             }
             Event::RedrawRequested(..) => {
-                let output_frame = match main_surface.get_current_texture() {
+                let output_frame = match surface.get_current_texture() {
                     Ok(frame) => frame,
                     Err(wgpu::SurfaceError::Outdated) => {
                         return;
@@ -218,8 +220,8 @@ async fn run(event_loop: EventLoop<ExampleEvent>, window: Window) {
                     let mut command_encoder = device.create_command_encoder(
                         &wgpu::CommandEncoderDescriptor { label: None }
                     );
-                    let viewport_rect = egui_app.viewport_rect;
-                    engine_instance.render(&mut command_encoder, &viewport_view, viewport_rect);
+                    let viewport_region = &egui_app.viewport_region;
+                    engine_instance.render(&mut command_encoder, &viewport_view, viewport_region);
                     queue.submit(Some(command_encoder.finish()));
                 }
 
@@ -229,7 +231,7 @@ async fn run(event_loop: EventLoop<ExampleEvent>, window: Window) {
                         .texture
                         .create_view(&wgpu::TextureViewDescriptor::default());
 
-                    platform.update_time(start_time.elapsed().as_secs_f64());
+                    platform.update_time(egui_start_time.elapsed().as_secs_f64());
 
                     let egui_start = Instant::now();
                     platform.begin_frame();
@@ -240,7 +242,7 @@ async fn run(event_loop: EventLoop<ExampleEvent>, window: Window) {
                         info: epi::IntegrationInfo {
                             name: "egpu_test",
                             web_info: None,
-                            cpu_usage: previous_frame_time,
+                            cpu_usage: previous_egui_frame_time,
                             native_pixels_per_point: Some(window.scale_factor() as _),
                             prefer_dark_mode: None,
                         },
@@ -248,21 +250,22 @@ async fn run(event_loop: EventLoop<ExampleEvent>, window: Window) {
                         repaint_signal: repaint_signal.clone(),
                     });
 
+                    egui_app.frame_time = last_frame_time;
                     egui_app.update(&platform.context(), &mut frame);
 
                     let (_output, paint_commands) = platform.end_frame(Some(&window));
                     let paint_jobs = platform.context().tessellate(paint_commands);
 
-                    let frame_time = (Instant::now() - egui_start).as_secs_f64() as f32;
-                    previous_frame_time = Some(frame_time);
+                    let egui_frame_time = (Instant::now() - egui_start).as_secs_f64() as f32;
+                    previous_egui_frame_time = Some(egui_frame_time);
 
                     let mut command_encoder = device.create_command_encoder(
                         &wgpu::CommandEncoderDescriptor { label: Some("egui CommandEncoder") }
                     );
 
                     let screen_descriptor = ScreenDescriptor {
-                        physical_width: main_surface_config.width,
-                        physical_height: main_surface_config.height,
+                        physical_width: surface_config.width,
+                        physical_height: surface_config.height,
                         scale_factor: window.scale_factor() as f32,
                     };
 
@@ -277,6 +280,10 @@ async fn run(event_loop: EventLoop<ExampleEvent>, window: Window) {
                     queue.submit(iter::once(command_encoder.finish()));
                 }
                 output_frame.present();
+
+                let now = Instant::now();
+                last_frame_time = now.duration_since(last_frame_end);
+                last_frame_end = now;
             }
             Event::MainEventsCleared | UserEvent(ExampleEvent::RequestRedraw) => {
                 window.request_redraw();
@@ -289,16 +296,15 @@ async fn run(event_loop: EventLoop<ExampleEvent>, window: Window) {
 fn main() {
     let event_loop = EventLoop::with_user_event();
     let window = WindowBuilder::new()
-        .with_title("Dyngine")
+        .with_title("Dyngine Editor")
         .with_decorations(true)
         .with_resizable(true)
         .with_transparent(false)
-        .with_min_inner_size(LogicalSize { width: 720, height: 480 })
+        .with_min_inner_size(LogicalSize { width: 1280, height: 720 })
         .build(&event_loop)
         .unwrap();
 
     {
-        env_logger::init();
         // Temporarily avoid srgb formats for the swap chain on the web
         pollster::block_on(run(event_loop, window));
     }

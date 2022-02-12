@@ -6,3 +6,8 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+dyngine_core = { path = "../core" }
+epi = "0.16"
+winit = "0.26"
+wgpu = "0.12"
+pollster = "0.2"
