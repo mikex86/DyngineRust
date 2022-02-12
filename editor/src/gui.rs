@@ -1,7 +1,7 @@
 use std::collections::VecDeque;
 use std::rc::Rc;
 use std::time::Duration;
-use egui::{CtxRef, Frame, Style, Vec2};
+use egui::{Color32, CtxRef, Frame, Pos2, Stroke, Style, Vec2};
 use egui::{menu};
 use crate::i18n::Translator;
 
@@ -11,7 +11,7 @@ pub struct TestApp {
     translator: Rc<Translator>,
     pub viewport_region: ViewportRegion,
     pub frame_time: Duration,
-    pub fps_average_window: VecDeque<u32>
+    pub fps_average_window: VecDeque<u32>,
 }
 
 impl TestApp {
@@ -20,7 +20,7 @@ impl TestApp {
             translator,
             viewport_region: ViewportRegion::ZERO,
             frame_time: Duration::new(0, 0),
-            fps_average_window: VecDeque::new()
+            fps_average_window: VecDeque::new(),
         };
     }
 }
@@ -110,32 +110,41 @@ impl epi::App for TestApp {
                         ui.label("Sub Label 1");
                     });
             });
-        egui::CentralPanel::default().show(ctx, |ui| {
-            // query available_size before the label is rendered, because we want it to overlay the viewport
-            let viewport_size = ui.available_size();
+        egui::CentralPanel::default()
+            .frame(Frame {
+                margin: Vec2::new(0.0, 0.0),
+                corner_radius: 0.0,
+                fill: Color32::TRANSPARENT,
+                stroke: Stroke {
+                    color: Color32::TRANSPARENT,
+                    width: 0.0,
+                },
+                ..Default::default()
+            })
+            .show(ctx, |ui| {
+                let viewport_size_before_label = ui.available_size();
 
-            // render FPS label with average FPS over a time window of 60 frames
-            let frame_time_nanos = self.frame_time.as_nanos();
-            if frame_time_nanos != 0 {
-                let fps = (1_000_000_000.0 / (frame_time_nanos as f64)) as u32;
-                self.fps_average_window.push_back(fps);
-                if self.fps_average_window.len() > 60 {
-                    self.fps_average_window.pop_front();
+                // render FPS label with average FPS over a time window of 60 frames
+                let frame_time_nanos = self.frame_time.as_nanos();
+                let label_pos;
+                if frame_time_nanos != 0 {
+                    let fps = (1_000_000_000.0 / (frame_time_nanos as f64)) as u32;
+                    self.fps_average_window.push_back(fps);
+                    if self.fps_average_window.len() > 60 {
+                        self.fps_average_window.pop_front();
+                    }
+                    let fps_average = self.fps_average_window.iter().sum::<u32>() / self.fps_average_window.len() as u32;
+                    label_pos = ui.label(format!("FPS: {}", fps_average)).rect.min;
+                } else {
+                    label_pos = Pos2::ZERO;
                 }
-                let fps_average = self.fps_average_window.iter().sum::<u32>() / self.fps_average_window.len() as u32;
-                ui.label(format!("FPS: {}", fps_average));
-            }
-
-            let viewport_widget = egui::Label::new("");
-            let response = ui.add_sized(viewport_size, viewport_widget);
-            let response_rect = response.rect;
-            self.viewport_region = ViewportRegion {
-                x: response_rect.min.x,
-                y: response_rect.min.y,
-                width: response_rect.width(),
-                height: response_rect.height(),
-            }
-        });
+                self.viewport_region = ViewportRegion {
+                    x: label_pos.x,
+                    y: label_pos.y,
+                    width: viewport_size_before_label.x,
+                    height: viewport_size_before_label.y,
+                }
+            });
     }
 
     fn name(&self) -> &str {
