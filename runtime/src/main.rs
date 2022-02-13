@@ -1,6 +1,4 @@
 use std::rc::Rc;
-use std::thread::sleep;
-use std::time::Duration;
 use winit::dpi::LogicalSize;
 use winit::event::{Event, WindowEvent};
 use winit::event_loop::{ControlFlow, EventLoop};
@@ -121,6 +119,8 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
 
 #[cfg(feature = "profile-with-optick")]
 fn wait_for_profiler() {
+    use std::thread::sleep;
+    use std::time::Duration;
     for _ in 0..100 {
         profiling::scope!("Wait for Optick...");
         sleep(Duration::from_millis(100));

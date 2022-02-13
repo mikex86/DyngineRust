@@ -3,7 +3,6 @@ mod i18n;
 
 use std::iter;
 use std::rc::Rc;
-use std::thread::sleep;
 use std::time::{Duration, Instant};
 use egui::{Color32, FontDefinitions, Style, TextStyle, Visuals};
 use egui::style::{Widgets, WidgetVisuals};
@@ -299,6 +298,7 @@ async fn run(event_loop: EventLoop<ExampleEvent>, window: Window) {
 
 #[cfg(feature = "profile-with-optick")]
 fn wait_for_profiler() {
+    use std::thread::sleep;
     for _ in 0..100 {
         profiling::scope!("Wait for Optick...");
         sleep(Duration::from_millis(100));
