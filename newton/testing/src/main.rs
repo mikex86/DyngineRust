@@ -9,7 +9,7 @@ use kiss3d::window::{State, Window};
 use rapier3d::prelude::*;
 
 trait Node {
-    fn update(&mut self, rigid_body_set: &RigidBodySet);
+    fn update(&mut self, rigid_body_set: &RigidBodySet, window: &mut Window);
 }
 
 struct Cube {
@@ -27,7 +27,9 @@ impl Cube {
         let ball_body_handle = rigid_body_set.insert(rigid_body);
         collider_set.insert_with_parent(collider, ball_body_handle, rigid_body_set);
 
-        let node = window.add_cube(1.0, 1.0, 1.0);
+        let mut node = window.add_cube(2.0, 2.0, 2.0);
+        node.set_visible(false);
+
         return Cube {
             cube_node: node,
             cube_handle: ball_body_handle,
@@ -36,8 +38,9 @@ impl Cube {
 }
 
 impl Node for Cube {
-    fn update(&mut self, rigid_body_set: &RigidBodySet) {
+    fn update(&mut self, rigid_body_set: &RigidBodySet, _: &mut Window) {
         let position = rigid_body_set[self.cube_handle].position().translation;
+
         self.cube_node.set_local_translation(Translation3::new(position.x, position.y, position.z));
         self.cube_node.set_visible(true);
     }
@@ -59,7 +62,7 @@ struct AppState {
 }
 
 impl State for AppState {
-    fn step(&mut self, _: &mut Window) {
+    fn step(&mut self, window: &mut Window) {
         let delta_time_duration = Instant::now() - self.last_frame_end;
         let delta_time_seconds = delta_time_duration.as_secs_f32();
         let mut integration_parameters = IntegrationParameters::default();
@@ -85,7 +88,7 @@ impl State for AppState {
         // Update nodes
         {
             for node in &mut self.nodes {
-                node.update(&self.rigid_body_set);
+                node.update(&self.rigid_body_set, window);
             }
         }
         self.last_frame_end = Instant::now();
@@ -106,11 +109,13 @@ fn main() {
     let narrow_phase = NarrowPhase::new();
     let ccd_solver = CCDSolver::new();
 
+
     let state = AppState {
         last_frame_end: Instant::now(),
         nodes: vec![
-            Box::new(Cube::new(&mut rigid_body_set, &mut collider_set, &mut window, Vec3A::new(0.0, 100.0, 0.0), false)),
-            Box::new(Cube::new(&mut rigid_body_set, &mut collider_set, &mut window, Vec3A::new(0.0, 0.0, 0.0), true)),
+            Box::new(Cube::new(&mut rigid_body_set, &mut collider_set, &mut window, Vec3A::new(0.0, 9.0, 0.0), false)),
+            Box::new(Cube::new(&mut rigid_body_set, &mut collider_set, &mut window, Vec3A::new(0.0, 7.0, 0.0), false)),
+            Box::new(Cube::new(&mut rigid_body_set, &mut collider_set, &mut window, Vec3A::new(0.0, 1.0, 0.0), true)),
         ],
         rigid_body_set,
         collider_set,
