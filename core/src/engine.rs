@@ -36,6 +36,7 @@ impl EngineInstance {
         EngineInstance { device, surface_format, engine_core_state: None }
     }
 
+    #[profiling::function]
     pub fn start(&mut self) {
         let shader = self.device.create_shader_module(&wgpu::ShaderModuleDescriptor {
             label: None,
@@ -69,6 +70,7 @@ impl EngineInstance {
         self.engine_core_state = Some(EngineCoreState { render_pipeline });
     }
 
+    #[profiling::function]
     pub fn render(&self, command_encoder: &mut CommandEncoder, surface_texture_view: &wgpu::TextureView, viewport_region: &ViewportRegion) {
         let mut render_pass = command_encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: None,

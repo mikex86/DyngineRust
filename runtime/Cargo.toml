@@ -11,3 +11,7 @@ epi = "0.16"
 winit = "0.26"
 wgpu = "0.12"
 pollster = "0.2"
+profiling = "1.0.5"
+
+[features]
+profile-with-optick = ["profiling/profile-with-optick"]

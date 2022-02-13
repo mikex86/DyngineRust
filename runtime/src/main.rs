@@ -1,4 +1,6 @@
 use std::rc::Rc;
+use std::thread::sleep;
+use std::time::Duration;
 use winit::dpi::LogicalSize;
 use winit::event::{Event, WindowEvent};
 use winit::event_loop::{ControlFlow, EventLoop};
@@ -75,6 +77,8 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                 _ => {}
             }
             Event::RedrawRequested(..) => {
+                profiling::scope!("RedrawRequested");
+
                 let output_frame = match surface.get_current_texture() {
                     Ok(frame) => frame,
                     Err(wgpu::SurfaceError::Outdated) => {
@@ -104,6 +108,7 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                     queue.submit(Some(command_encoder.finish()));
                 }
                 output_frame.present();
+                profiling::finish_frame!();
             }
             Event::MainEventsCleared => {
                 window.request_redraw();
@@ -114,7 +119,19 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
 }
 
 
+#[cfg(feature = "profile-with-optick")]
+fn wait_for_profiler() {
+    for _ in 0..100 {
+        profiling::scope!("Wait for Optick...");
+        sleep(Duration::from_millis(100));
+        profiling::finish_frame!();
+    }
+}
+
 fn main() {
+    #[cfg(feature = "profile-with-optick")]
+        wait_for_profiler();
+
     let event_loop = EventLoop::with_user_event();
     let window = WindowBuilder::new()
         .with_title("Dyngine")
@@ -126,7 +143,6 @@ fn main() {
         .unwrap();
 
     {
-        // Temporarily avoid srgb formats for the swap chain on the web
         pollster::block_on(run(event_loop, window));
     }
 }

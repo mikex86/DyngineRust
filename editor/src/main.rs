@@ -3,6 +3,7 @@ mod i18n;
 
 use std::iter;
 use std::rc::Rc;
+use std::thread::sleep;
 use std::time::{Duration, Instant};
 use egui::{Color32, FontDefinitions, Style, TextStyle, Visuals};
 use egui::style::{Widgets, WidgetVisuals};
@@ -180,7 +181,6 @@ async fn run(event_loop: EventLoop<ExampleEvent>, window: Window) {
         // event_loop.run never returns, therefore we must take ownership of the resources
         // to ensure the resources are properly cleaned up.
         let _ = (&instance, &adapter, &engine_instance);
-
         platform.handle_event(&event);
 
         match event {
@@ -201,6 +201,8 @@ async fn run(event_loop: EventLoop<ExampleEvent>, window: Window) {
                 _ => {}
             }
             Event::RedrawRequested(..) => {
+                profiling::scope!("RedrawRequested");
+
                 let output_frame = match surface.get_current_texture() {
                     Ok(frame) => frame,
                     Err(wgpu::SurfaceError::Outdated) => {
@@ -284,6 +286,8 @@ async fn run(event_loop: EventLoop<ExampleEvent>, window: Window) {
                 let now = Instant::now();
                 last_frame_time = now.duration_since(last_frame_end);
                 last_frame_end = now;
+
+                profiling::finish_frame!();
             }
             Event::MainEventsCleared | UserEvent(ExampleEvent::RequestRedraw) => {
                 window.request_redraw();
@@ -293,7 +297,22 @@ async fn run(event_loop: EventLoop<ExampleEvent>, window: Window) {
     });
 }
 
+#[cfg(feature = "profile-with-optick")]
+fn wait_for_profiler() {
+    for _ in 0..100 {
+        profiling::scope!("Wait for Optick...");
+        sleep(Duration::from_millis(100));
+        profiling::finish_frame!();
+    }
+}
+
+#[profiling::function]
 fn main() {
+    profiling::register_thread!("Engine");
+
+    #[cfg(feature = "profile-with-optick")]
+        wait_for_profiler();
+
     let event_loop = EventLoop::with_user_event();
     let window = WindowBuilder::new()
         .with_title("Dyngine Editor")
@@ -305,7 +324,6 @@ fn main() {
         .unwrap();
 
     {
-        // Temporarily avoid srgb formats for the swap chain on the web
         pollster::block_on(run(event_loop, window));
     }
 }

@@ -26,6 +26,8 @@ impl TestApp {
 }
 
 impl epi::App for TestApp {
+
+    #[profiling::function]
     fn update(&mut self, ctx: &CtxRef, _frame: &epi::Frame) {
         // ctx.style() has transparent background
         // This is to avoid erasing transparency where it is needed. (eg. viewport)

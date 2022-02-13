@@ -7,3 +7,7 @@ edition = "2021"
 
 [dependencies]
 wgpu = "0.12"
+profiling = "1.0.5"
+
+[features]
+profile-with-optick = ["profiling/profile-with-optick"]
