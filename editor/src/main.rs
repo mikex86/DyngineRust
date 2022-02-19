@@ -23,7 +23,7 @@ use winit::event::{Event, WindowEvent};
 use winit::event::Event::UserEvent;
 use winit::event_loop::ControlFlow;
 use winit::window::{WindowBuilder};
-use dyngine_core::engine::EngineInstance;
+use dyngine_core::engine::{EngineInstance, ViewportRegion};
 use crate::gui::TestApp;
 
 
@@ -253,7 +253,14 @@ async fn run(event_loop: EventLoop<ExampleEvent>, window: Window) {
                         &wgpu::CommandEncoderDescriptor { label: Some("MainEngineCommandEncoder") }
                     );
                     let viewport_region = &egui_app.viewport_region;
-                    engine_instance.render(&mut command_encoder, &viewport_view, Some(&multisampled_frame_buffer), viewport_region);
+                    let scale_factor = window.scale_factor() as f32;
+                    let scaled_viewport_region = ViewportRegion {
+                        x: viewport_region.x * scale_factor,
+                        y: viewport_region.y * scale_factor,
+                        width: viewport_region.width * scale_factor,
+                        height: viewport_region.height * scale_factor
+                    };
+                    engine_instance.render(&mut command_encoder, &viewport_view, Some(&multisampled_frame_buffer), &scaled_viewport_region);
                     queue.submit(Some(command_encoder.finish()));
                 }
 
