@@ -6,7 +6,15 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-kiss3d = "0.32"
+kiss3d = { version =  "0.33.0", features = ["conrod"] }
 glam = "0.20.2"
-rapier3d = { version = "0.11.1", features = ["simd-stable", "parallel"] }
+rapier3d = { version = "0.11.1", features = ["simd-stable"] }
+obj-rs = "0.7.0"
+rand = "0.8.5"
 newton = { path = "../" }
+
+[profile.dev.package.rapier3d]
+opt-level = 3
+
+[profile.release]
+codegen-units = 1

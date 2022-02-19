@@ -1,7 +1,9 @@
 mod gui;
 mod i18n;
 
+use std::cell::RefCell;
 use std::iter;
+use std::ops::Deref;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 use egui::{Color32, FontDefinitions, Style, TextStyle, Visuals};
@@ -9,13 +11,14 @@ use egui::style::{Widgets, WidgetVisuals};
 use egui_wgpu_backend::{RenderPass, ScreenDescriptor};
 use egui_winit_platform::{Platform, PlatformDescriptor};
 use epi::App;
+use wgpu::{Device, SurfaceConfiguration, TextureFormat, TextureView};
 
 use winit::{
     event_loop::{EventLoop},
     window::Window,
 };
 
-use winit::dpi::LogicalSize;
+use winit::dpi::{LogicalSize, PhysicalSize};
 use winit::event::{Event, WindowEvent};
 use winit::event::Event::UserEvent;
 use winit::event_loop::ControlFlow;
@@ -54,8 +57,7 @@ async fn run(event_loop: EventLoop<ExampleEvent>, window: Window) {
         .await
         .expect("Failed to find an appropriate adapter");
 
-    let device;
-    let queue;
+    let (device, queue);
     {
         let (d, q) = adapter
             .request_device(
@@ -73,19 +75,39 @@ async fn run(event_loop: EventLoop<ExampleEvent>, window: Window) {
 
     let surface_format = surface.get_preferred_format(&adapter).unwrap();
 
-    let mut engine_instance = EngineInstance::new(device.clone(), surface_format);
-
-    engine_instance.start();
-
-    let mut surface_config = wgpu::SurfaceConfiguration {
+    let surface_config: Rc<RefCell<SurfaceConfiguration>> = Rc::new(RefCell::new(wgpu::SurfaceConfiguration {
         usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
         format: surface_format,
         width: size.width,
         height: size.height,
         present_mode: wgpu::PresentMode::Mailbox,
-    };
+    }));
 
-    surface.configure(&device, &surface_config);
+    let mut engine_instance = EngineInstance::new(device.clone(), surface_config.clone());
+
+    fn create_multi_sampled_frame_buffer(device: &Device, size: &PhysicalSize<u32>, multi_sample_count: u32, surface_format: TextureFormat) -> TextureView {
+        return device
+            .create_texture(&wgpu::TextureDescriptor {
+                size: wgpu::Extent3d {
+                    width: size.width,
+                    height: size.height,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: multi_sample_count,
+                dimension: wgpu::TextureDimension::D2,
+                format: surface_format,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+                label: None,
+            })
+            .create_view(&wgpu::TextureViewDescriptor::default());
+    }
+
+    let mut multisampled_frame_buffer = create_multi_sampled_frame_buffer(&device, &size, engine_instance.multisample_state.count, surface_format);
+
+    engine_instance.start();
+
+    surface.configure(&device, surface_config.borrow_mut().deref());
 
     let repaint_signal = std::sync::Arc::new(ExampleRepaintSignal(std::sync::Mutex::new(
         event_loop.create_proxy(),
@@ -189,9 +211,18 @@ async fn run(event_loop: EventLoop<ExampleEvent>, window: Window) {
             } => match event {
                 WindowEvent::Resized(size) => {
                     if size.width > 0 && size.height > 0 {
-                        surface_config.width = size.width;
-                        surface_config.height = size.height;
-                        surface.configure(&device, &surface_config);
+                        // Resize surface
+                        {
+                            let mut surface_config_mut = surface_config.borrow_mut();
+                            surface_config_mut.width = size.width;
+                            surface_config_mut.height = size.height;
+                        }
+                        surface.configure(&device, surface_config.borrow_mut().deref());
+
+                        // Resize multi sampled frame buffer
+                        {
+                            multisampled_frame_buffer = create_multi_sampled_frame_buffer(&device, &size, engine_instance.multisample_state.count, surface_format);
+                        }
                     }
                 }
                 WindowEvent::CloseRequested => {
@@ -219,10 +250,10 @@ async fn run(event_loop: EventLoop<ExampleEvent>, window: Window) {
                         .create_view(&wgpu::TextureViewDescriptor::default());
 
                     let mut command_encoder = device.create_command_encoder(
-                        &wgpu::CommandEncoderDescriptor { label: None }
+                        &wgpu::CommandEncoderDescriptor { label: Some("MainEngineCommandEncoder") }
                     );
                     let viewport_region = &egui_app.viewport_region;
-                    engine_instance.render(&mut command_encoder, &viewport_view, viewport_region);
+                    engine_instance.render(&mut command_encoder, &viewport_view, Some(&multisampled_frame_buffer), viewport_region);
                     queue.submit(Some(command_encoder.finish()));
                 }
 
@@ -261,12 +292,13 @@ async fn run(event_loop: EventLoop<ExampleEvent>, window: Window) {
                     previous_egui_frame_time = Some(egui_frame_time);
 
                     let mut command_encoder = device.create_command_encoder(
-                        &wgpu::CommandEncoderDescriptor { label: Some("egui CommandEncoder") }
+                        &wgpu::CommandEncoderDescriptor { label: Some("EguiRender") }
                     );
 
+                    let surface_config_mut = surface_config.borrow_mut();
                     let screen_descriptor = ScreenDescriptor {
-                        physical_width: surface_config.width,
-                        physical_height: surface_config.height,
+                        physical_width: surface_config_mut.width,
+                        physical_height: surface_config_mut.height,
                         scale_factor: window.scale_factor() as f32,
                     };
 

@@ -36,13 +36,7 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
         device = Rc::new(d);
         queue = q;
     }
-
-    let surface_format = surface.get_preferred_format(&adapter).unwrap();
-
-    let mut engine_instance = EngineInstance::new(device.clone(), surface_format);
-
-    engine_instance.start();
-
+    
     let mut surface_config = wgpu::SurfaceConfiguration {
         usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
         format: surface_format,
@@ -51,6 +45,9 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
         present_mode: wgpu::PresentMode::Mailbox,
     };
 
+    let mut engine_instance = EngineInstance::new(device.clone(), &surface_config);
+
+    engine_instance.start();
     surface.configure(&device, &surface_config);
 
     event_loop.run(move |event, _, control_flow| {
@@ -94,7 +91,7 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                         .create_view(&wgpu::TextureViewDescriptor::default());
 
                     let mut command_encoder = device.create_command_encoder(
-                        &wgpu::CommandEncoderDescriptor { label: None }
+                        &wgpu::CommandEncoderDescriptor { label: Some("EngineRender") }
                     );
                     let viewport_region = ViewportRegion {
                         x: 0.0,
