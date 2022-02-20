@@ -57,6 +57,15 @@ impl Camera {
         };
     }
 
+    pub fn update(&mut self) {
+        let camera_right = self.up_axis.cross(self.direction);
+        self.camera_up = self.direction.cross(camera_right);
+
+        let view_matrix = Mat4::look_at_lh(self.position, self.position + self.direction, self.camera_up);
+        let projection_matrix = Mat4::perspective_lh(self.fov, self.aspect, self.near, self.far);
+        self.camera_shader_state.view_proj = (projection_matrix * view_matrix).to_cols_array_2d();
+    }
+
     pub fn set_position(&mut self, position: Vec3) {
         self.position = position;
     }
@@ -81,12 +90,29 @@ impl Camera {
         self.far = far;
     }
 
-    pub fn update(&mut self) {
-        let camera_right = self.up_axis.cross(self.direction);
-        self.camera_up = self.direction.cross(camera_right);
+    pub fn position(&self) -> Vec3 {
+        self.position
+    }
 
-        let view_matrix = Mat4::look_at_lh(self.position, self.position + self.direction, self.camera_up);
-        let projection_matrix = Mat4::perspective_lh(self.fov, self.aspect, self.near, self.far);
-        self.camera_shader_state.view_proj = (projection_matrix * view_matrix).to_cols_array_2d();
+    pub fn direction(&self) -> Vec3 {
+        self.direction
+    }
+    pub fn up_axis(&self) -> Vec3 {
+        self.up_axis
+    }
+    pub fn camera_up(&self) -> Vec3 {
+        self.camera_up
+    }
+    pub fn aspect(&self) -> f32 {
+        self.aspect
+    }
+    pub fn fov(&self) -> f32 {
+        self.fov
+    }
+    pub fn near(&self) -> f32 {
+        self.near
+    }
+    pub fn far(&self) -> f32 {
+        self.far
     }
 }
