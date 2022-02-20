@@ -57,7 +57,7 @@ async fn run(event_loop: EventLoop<ExampleEvent>, window: Window) {
         .await
         .expect("Failed to find an appropriate adapter");
 
-    let (device, queue);
+    let (device, mut queue);
     {
         let (d, q) = adapter
             .request_device(
@@ -260,7 +260,7 @@ async fn run(event_loop: EventLoop<ExampleEvent>, window: Window) {
                         width: viewport_region.width * scale_factor,
                         height: viewport_region.height * scale_factor
                     };
-                    engine_instance.render(&mut command_encoder, &viewport_view, Some(&multisampled_frame_buffer), &scaled_viewport_region);
+                    engine_instance.render(&mut queue, &mut command_encoder, &viewport_view, Some(&multisampled_frame_buffer), &scaled_viewport_region);
                     queue.submit(Some(command_encoder.finish()));
                 }
 

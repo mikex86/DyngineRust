@@ -1,4 +1,7 @@
+use std::cell::RefCell;
+use std::ops::Deref;
 use std::rc::Rc;
+use wgpu::SurfaceConfiguration;
 use winit::dpi::LogicalSize;
 use winit::event::{Event, WindowEvent};
 use winit::event_loop::{ControlFlow, EventLoop};
@@ -21,7 +24,7 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
         .expect("Failed to find an appropriate adapter");
 
     let device;
-    let queue;
+    let mut queue;
     {
         let (d, q) = adapter
             .request_device(
@@ -36,19 +39,21 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
         device = Rc::new(d);
         queue = q;
     }
-    
-    let mut surface_config = wgpu::SurfaceConfiguration {
+
+    let surface_format = surface.get_preferred_format(&adapter).unwrap();
+
+    let surface_config: Rc<RefCell<SurfaceConfiguration>> = Rc::new(RefCell::new(wgpu::SurfaceConfiguration {
         usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
         format: surface_format,
         width: size.width,
         height: size.height,
         present_mode: wgpu::PresentMode::Mailbox,
-    };
+    }));
 
-    let mut engine_instance = EngineInstance::new(device.clone(), &surface_config);
+    let mut engine_instance = EngineInstance::new(device.clone(), surface_config.clone());
 
     engine_instance.start();
-    surface.configure(&device, &surface_config);
+    surface.configure(&device, surface_config.borrow_mut().deref());
 
     event_loop.run(move |event, _, control_flow| {
         // event_loop.run never returns, therefore we must take ownership of the resources
@@ -61,9 +66,10 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
             } => match event {
                 WindowEvent::Resized(size) => {
                     if size.width > 0 && size.height > 0 {
-                        surface_config.width = size.width;
-                        surface_config.height = size.height;
-                        surface.configure(&device, &surface_config);
+                        let mut surface_config_mut = surface_config.borrow_mut();
+                        surface_config_mut.width = size.width;
+                        surface_config_mut.height = size.height;
+                        surface.configure(&device, surface_config_mut.deref());
                     }
                 }
                 WindowEvent::CloseRequested => {
@@ -93,13 +99,15 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                     let mut command_encoder = device.create_command_encoder(
                         &wgpu::CommandEncoderDescriptor { label: Some("EngineRender") }
                     );
+
+                    let surface_config_mut = surface_config.borrow_mut();
                     let viewport_region = ViewportRegion {
                         x: 0.0,
                         y: 0.0,
-                        width: surface_config.width as f32,
-                        height: surface_config.height as f32,
+                        width: surface_config_mut.width as f32,
+                        height: surface_config_mut.height as f32,
                     };
-                    engine_instance.render(&mut command_encoder, &viewport_view, &viewport_region);
+                    engine_instance.render(&mut queue, &mut command_encoder, &viewport_view, None, &viewport_region);
                     queue.submit(Some(command_encoder.finish()));
                 }
                 output_frame.present();
