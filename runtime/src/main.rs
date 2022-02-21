@@ -1,6 +1,7 @@
 use std::cell::RefCell;
 use std::ops::Deref;
 use std::rc::Rc;
+use std::time::{Duration, Instant};
 use wgpu::SurfaceConfiguration;
 use winit::dpi::LogicalSize;
 use winit::event::{Event, WindowEvent};
@@ -54,6 +55,9 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
 
     engine_instance.start();
     surface.configure(&device, surface_config.borrow_mut().deref());
+
+    let mut last_frame_end = Instant::now();
+    let mut last_frame_time = Duration::from_secs(0);
 
     event_loop.run(move |event, _, control_flow| {
         // event_loop.run never returns, therefore we must take ownership of the resources
@@ -110,7 +114,16 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                     engine_instance.render(&mut queue, &mut command_encoder, &viewport_view, None, &viewport_region);
                     queue.submit(Some(command_encoder.finish()));
                 }
+
                 output_frame.present();
+
+                if !last_frame_time.is_zero() {
+                    println!("FPS: {}", 1.0 / last_frame_time.as_secs_f32());
+                }
+                let now = Instant::now();
+                last_frame_time = now.duration_since(last_frame_end);
+                last_frame_end = now;
+
                 profiling::finish_frame!();
             }
             Event::MainEventsCleared => {

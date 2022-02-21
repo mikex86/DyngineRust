@@ -5,7 +5,7 @@ use glam::Vec3;
 use wgpu::{BindGroup, Buffer, ColorTargetState, MultisampleState, Queue, RenderBundle, RenderBundleDescriptor, RenderBundleEncoderDescriptor, SurfaceConfiguration};
 use wgpu::{Color, CommandEncoder, Device};
 use wgpu::util::DeviceExt;
-use crate::scene::Camera;
+use scenelib::camera::Camera;
 
 pub struct EngineCoreState {
     render_pipeline: wgpu::RenderPipeline,
@@ -105,6 +105,7 @@ impl EngineInstance {
             ],
             label: Some("camera_bind_group_layout"),
         });
+
         let camera_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             layout: &camera_bind_group_layout,
             entries: &[
@@ -115,6 +116,7 @@ impl EngineInstance {
             ],
             label: Some("camera_bind_group"),
         });
+
         let shader = self.device.create_shader_module(&wgpu::ShaderModuleDescriptor {
             label: None,
             source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(include_str!("../cres/shaders/shader.frag.wgsl"))),
@@ -172,14 +174,15 @@ impl EngineInstance {
             depth_stencil_attachment: None,
         });
 
+        engine_core_state.camera.set_rotation(engine_core_state.camera.yaw() + 0.1, engine_core_state.camera.pitch());
         engine_core_state.camera.update();
-
 
         render_pass.set_viewport(viewport_region.x, viewport_region.y, viewport_region.width, viewport_region.height, 0.0, 1.0);
         render_pass.set_pipeline(&engine_core_state.render_pipeline);
 
         queue.write_buffer(&engine_core_state.camera_buffer, 0, bytemuck::cast_slice(&[engine_core_state.camera.camera_shader_state]));
         render_pass.set_bind_group(0, &engine_core_state.camera_bind_group, &[]);
+
         render_pass.execute_bundles(std::iter::once(&engine_core_state.triangle_render_bundle));
     }
 }

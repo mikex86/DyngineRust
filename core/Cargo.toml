@@ -10,6 +10,7 @@ wgpu = "0.12"
 profiling = "1.0.5"
 glam = "0.20.2"
 bytemuck = { version = "1.4", features = [ "derive" ] }
+scenelib = { path = "./scenelib" }
 
 [features]
 profile-with-optick = ["profiling/profile-with-optick"]
