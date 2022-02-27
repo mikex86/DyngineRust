@@ -2,8 +2,7 @@ mod gui;
 mod i18n;
 
 use std::cell::RefCell;
-use std::{io, iter};
-use std::io::Write;
+use std::{iter};
 use std::ops::Deref;
 use std::rc::Rc;
 use std::time::{Duration, Instant};

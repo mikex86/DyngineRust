@@ -142,14 +142,14 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
 
                     let surface_config_mut = surface_config.borrow_mut();
 
-                    let scale_factor = window.scale_factor() as f32;
-                    let scaled_viewport_region = ViewportRegion {
+                    // No scale factor needed to render correctly
+                    let viewport_region = ViewportRegion {
                         x: 0.0,
                         y: 0.0,
-                        width: surface_config_mut.width as f32 * scale_factor,
-                        height: surface_config_mut.height as f32 * scale_factor,
+                        width: surface_config_mut.width as f32,
+                        height: surface_config_mut.height as f32,
                     };
-                    engine_instance.render(&mut command_encoder, &viewport_view, None, &scaled_viewport_region, last_frame_time.as_secs_f64());
+                    engine_instance.render(&mut command_encoder, &viewport_view, None, &viewport_region, last_frame_time.as_secs_f64());
                     queue.submit(Some(command_encoder.finish()));
                 }
 
