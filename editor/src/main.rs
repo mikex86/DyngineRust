@@ -1,31 +1,31 @@
-mod gui;
-mod i18n;
-
+use std::iter;
 use std::cell::RefCell;
-use std::{iter};
-use std::ops::Deref;
+use std::ops::{Deref};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
+
 use egui::{Color32, FontDefinitions, Style, TextStyle, Visuals};
 use egui::style::{Widgets, WidgetVisuals};
 use egui_wgpu_backend::{RenderPass, ScreenDescriptor};
 use egui_winit_platform::{Platform, PlatformDescriptor};
 use epi::App;
 use wgpu::{Device, SurfaceConfiguration, TextureFormat, TextureView};
-
 use winit::{
-    event_loop::{EventLoop},
+    event_loop::EventLoop,
     window::Window,
 };
-
-use winit::dpi::{LogicalSize, PhysicalSize};
+use winit::dpi::{LogicalSize, PhysicalPosition, PhysicalSize};
 use winit::event::{Event, WindowEvent};
 use winit::event::Event::UserEvent;
 use winit::event_loop::ControlFlow;
-use winit::window::{WindowBuilder};
-use dyngine_core::engine::{EngineInstance, ViewportRegion};
-use crate::gui::TestApp;
+use winit::window::WindowBuilder;
 
+use dyngine_core::engine::{EngineInstance, ViewportRegion};
+
+use crate::gui::EngineApp;
+
+mod gui;
+mod i18n;
 
 /// A custom event type for the winit app.
 enum ExampleEvent {
@@ -83,7 +83,7 @@ async fn run(event_loop: EventLoop<ExampleEvent>, window: Window) {
         present_mode: wgpu::PresentMode::Mailbox,
     }));
 
-    let mut engine_instance = EngineInstance::new(device.clone(), queue.clone(), surface_config.clone());
+    let engine_instance = Rc::new(RefCell::new(EngineInstance::new(device.clone(), queue.clone(), surface_config.clone())));
 
     fn create_multi_sampled_frame_buffer(device: &Device, size: &PhysicalSize<u32>, multi_sample_count: u32, surface_format: TextureFormat) -> TextureView {
         return device
@@ -103,9 +103,9 @@ async fn run(event_loop: EventLoop<ExampleEvent>, window: Window) {
             .create_view(&wgpu::TextureViewDescriptor::default());
     }
 
-    let mut multisampled_frame_buffer = create_multi_sampled_frame_buffer(&device, &size, engine_instance.multisample_state.count, surface_format);
+    let mut multisampled_frame_buffer = create_multi_sampled_frame_buffer(&device, &size, engine_instance.borrow().multisample_state.count, surface_format);
 
-    engine_instance.start();
+    engine_instance.borrow_mut().start();
 
     surface.configure(&device, surface_config.borrow_mut().deref());
 
@@ -190,7 +190,7 @@ async fn run(event_loop: EventLoop<ExampleEvent>, window: Window) {
     let mut egui_rpass = RenderPass::new(&device, surface_format, 1);
 
     let translator = Rc::new(crate::i18n::init_i18n("en-US".parse().unwrap()).unwrap());
-    let mut egui_app = TestApp::new(translator);
+    let mut egui_app = EngineApp::new(engine_instance.clone(), translator);
 
     let egui_start_time = Instant::now();
     let mut previous_egui_frame_time = None;
@@ -200,10 +200,10 @@ async fn run(event_loop: EventLoop<ExampleEvent>, window: Window) {
 
     window.set_visible(true); // Engine startup complete
 
+    let mut grabbed_cursor = false;
+    let mut window_has_focus = false;
+
     event_loop.run(move |event, _, control_flow| {
-        // event_loop.run never returns, therefore we must take ownership of the resources
-        // to ensure the resources are properly cleaned up.
-        let _ = (&instance, &adapter, &engine_instance);
         platform.handle_event(&event);
 
         match event {
@@ -223,7 +223,7 @@ async fn run(event_loop: EventLoop<ExampleEvent>, window: Window) {
 
                         // Resize multi sampled frame buffer
                         {
-                            multisampled_frame_buffer = create_multi_sampled_frame_buffer(&device, &size, engine_instance.multisample_state.count, surface_format);
+                            multisampled_frame_buffer = create_multi_sampled_frame_buffer(&device, &size, engine_instance.borrow().multisample_state.count, surface_format);
                         }
 
                         // Resize engine
@@ -235,26 +235,30 @@ async fn run(event_loop: EventLoop<ExampleEvent>, window: Window) {
                                 width: surface_config_mut.width as f32 * scale_factor,
                                 height: surface_config_mut.height as f32 * scale_factor,
                             };
-                            engine_instance.resize(&scaled_viewport_region);
+                            engine_instance.borrow_mut().resize(&scaled_viewport_region);
                         }
                     }
                 }
                 WindowEvent::KeyboardInput { device_id, input, is_synthetic } => {
                     match input.virtual_keycode {
                         Some(key_code) => {
-                            engine_instance.handle_key_state(device_id, key_code, input.state, is_synthetic, last_frame_time.as_secs_f64());
+                            engine_instance.borrow_mut().handle_key_state(device_id, key_code, input.state, is_synthetic, last_frame_time.as_secs_f64());
                         }
                         None => {}
                     }
                 }
                 WindowEvent::MouseInput { device_id, button, state, .. } => {
-                    engine_instance.handle_mouse_button_event(device_id, button, state, last_frame_time.as_secs_f64());
+                    engine_instance.borrow_mut().handle_mouse_button_event(device_id, button, state, last_frame_time.as_secs_f64());
                 }
                 WindowEvent::MouseWheel { device_id, delta, phase, .. } => {
-                    engine_instance.handle_mouse_wheel(device_id, delta, phase, last_frame_time.as_secs_f64());
+                    engine_instance.borrow_mut().handle_mouse_wheel(device_id, delta, phase, last_frame_time.as_secs_f64());
                 }
                 WindowEvent::CursorMoved { device_id, position, .. } => {
-                    engine_instance.handle_mouse_move(device_id, position, last_frame_time.as_secs_f64());
+                    engine_instance.borrow_mut().handle_mouse_move(device_id, position, last_frame_time.as_secs_f64());
+                }
+                WindowEvent::Focused(focused) => {
+                    window_has_focus = focused;
+                    egui_app.window_has_focus = focused;
                 }
                 WindowEvent::CloseRequested => {
                     *control_flow = ControlFlow::Exit;
@@ -274,6 +278,22 @@ async fn run(event_loop: EventLoop<ExampleEvent>, window: Window) {
                         return;
                     }
                 };
+
+                // Grab cursor, if engine requests it
+                // Only grab/un-grab and center cursor (hiding is done by egui)
+                if engine_instance.borrow().should_grab_cursor() && window_has_focus {
+                    if !grabbed_cursor {
+                        window.set_cursor_grab(true).unwrap();
+                        grabbed_cursor = true;
+                    }
+                    window.set_cursor_position(PhysicalPosition::new(surface_config.borrow().width / 2, surface_config.borrow().height / 2)).unwrap();
+                } else {
+                    if grabbed_cursor {
+                        window.set_cursor_grab(false).unwrap();
+                        grabbed_cursor = false;
+                    }
+                }
+
                 // Engine render
                 {
                     let viewport_view = output_frame
@@ -291,7 +311,7 @@ async fn run(event_loop: EventLoop<ExampleEvent>, window: Window) {
                         width: viewport_region.width * scale_factor,
                         height: viewport_region.height * scale_factor,
                     };
-                    engine_instance.render(&mut command_encoder, &viewport_view, Some(&multisampled_frame_buffer), &scaled_viewport_region, last_frame_time.as_secs_f64());
+                    engine_instance.borrow_mut().render(&mut command_encoder, &viewport_view, Some(&multisampled_frame_buffer), &scaled_viewport_region, last_frame_time.as_secs_f64());
                     queue.submit(Some(command_encoder.finish()));
                 }
 
@@ -402,7 +422,6 @@ fn main() {
         .with_visible(false)
         .build(&event_loop)
         .unwrap();
-
     {
         pollster::block_on(run(event_loop, window));
     }

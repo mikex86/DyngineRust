@@ -1,23 +1,28 @@
+use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::rc::Rc;
 use std::time::Duration;
-use egui::{Color32, CtxRef, Frame, Pos2, Stroke, Style, Vec2};
+use egui::{Color32, CtxRef, CursorIcon, Frame, Pos2, Stroke, Style, Vec2};
 use egui::{menu};
 use crate::i18n::Translator;
 
-use dyngine_core::engine::ViewportRegion;
+use dyngine_core::engine::{EngineInstance, ViewportRegion};
 
-pub struct TestApp {
+pub struct EngineApp {
+    engine_instance: Rc<RefCell<EngineInstance>>,
     translator: Rc<Translator>,
-    pub viewport_region: ViewportRegion,
-    pub frame_time: Duration,
-    pub fps_average_window: VecDeque<u32>,
+    pub(crate) window_has_focus: bool,
+    pub(crate) viewport_region: ViewportRegion,
+    pub(crate) frame_time: Duration,
+    pub(crate) fps_average_window: VecDeque<u32>,
 }
 
-impl TestApp {
-    pub fn new(translator: Rc<Translator>) -> Self {
-        return TestApp {
+impl EngineApp {
+    pub fn new(engine_instance: Rc<RefCell<EngineInstance>>, translator: Rc<Translator>) -> Self {
+        return EngineApp {
+            engine_instance,
             translator,
+            window_has_focus: false,
             viewport_region: ViewportRegion::ZERO,
             frame_time: Duration::new(0, 0),
             fps_average_window: VecDeque::new(),
@@ -25,8 +30,7 @@ impl TestApp {
     }
 }
 
-impl epi::App for TestApp {
-
+impl epi::App for EngineApp {
     #[profiling::function]
     fn update(&mut self, ctx: &CtxRef, _frame: &epi::Frame) {
         // ctx.style() has transparent background
@@ -125,6 +129,13 @@ impl epi::App for TestApp {
             })
             .show(ctx, |ui| {
                 let viewport_size_before_label = ui.available_size();
+
+                // Hide cursor
+                if self.engine_instance.borrow().should_grab_cursor() && self.window_has_focus {
+                    ctx.output().cursor_icon = CursorIcon::None;
+                } else {
+                    ctx.output().cursor_icon = CursorIcon::Default;
+                }
 
                 // render FPS label with average FPS over a time window of 60 frames
                 let frame_time_nanos = self.frame_time.as_nanos();

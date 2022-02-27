@@ -255,4 +255,8 @@ impl EngineInstance {
 
     #[profiling::function]
     pub fn handle_mouse_move(&mut self, _device_id: DeviceId, _mouse_position: PhysicalPosition<f64>, _delta_time: f64) {}
+
+    pub fn should_grab_cursor(&self) -> bool {
+        return true;
+    }
 }

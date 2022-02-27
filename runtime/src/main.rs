@@ -3,7 +3,7 @@ use std::ops::Deref;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 use wgpu::SurfaceConfiguration;
-use winit::dpi::{LogicalSize};
+use winit::dpi::{LogicalSize, PhysicalPosition};
 use winit::event::{Event, WindowEvent};
 use winit::event_loop::{ControlFlow, EventLoop};
 use winit::window::{Window, WindowBuilder};
@@ -63,6 +63,10 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
 
     window.set_visible(true); // engine startup complete
 
+    let mut grabbed_cursor = false;
+
+    let mut window_has_focus = false;
+
     event_loop.run(move |event, _, control_flow| {
         // event_loop.run never returns, therefore we must take ownership of the resources
         // to ensure the resources are properly cleaned up.
@@ -113,6 +117,9 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                 WindowEvent::CursorMoved { device_id, position, .. } => {
                     engine_instance.handle_mouse_move(device_id, position, last_frame_time.as_secs_f64());
                 }
+                WindowEvent::Focused(focused) => {
+                    window_has_focus = focused;
+                }
                 WindowEvent::CloseRequested => {
                     *control_flow = ControlFlow::Exit;
                 }
@@ -131,6 +138,23 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                         return;
                     }
                 };
+
+                // Grab cursor, if engine requests it
+                if engine_instance.should_grab_cursor() && window_has_focus {
+                    if !grabbed_cursor {
+                        window.set_cursor_grab(true).unwrap();
+                        window.set_cursor_visible(false);
+                        grabbed_cursor = true;
+                    }
+                    window.set_cursor_position(PhysicalPosition::new(surface_config.borrow().width / 2, surface_config.borrow().height / 2)).unwrap();
+                } else {
+                    if grabbed_cursor {
+                        window.set_cursor_grab(false).unwrap();
+                        window.set_cursor_visible(true);
+                        grabbed_cursor = false;
+                    }
+                }
+
                 // Engine render
                 {
                     let viewport_view = output_frame
