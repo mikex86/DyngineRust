@@ -198,6 +198,8 @@ async fn run(event_loop: EventLoop<ExampleEvent>, window: Window) {
     let mut last_frame_end = Instant::now();
     let mut last_frame_time = Duration::from_secs(0);
 
+    window.set_visible(true); // Engine startup complete
+
     event_loop.run(move |event, _, control_flow| {
         // event_loop.run never returns, therefore we must take ownership of the resources
         // to ensure the resources are properly cleaned up.
@@ -368,14 +370,16 @@ async fn run(event_loop: EventLoop<ExampleEvent>, window: Window) {
 fn wait_for_profiler() {
     print!("Giving profiler time to attach");
     use std::thread::sleep;
+    use std::io;
+    use std::io::Write;
     for _ in 0..100 {
         print!(".");
         profiling::scope!("Wait for Optick...");
         sleep(Duration::from_millis(100));
         profiling::finish_frame!();
         match io::stdout().flush() {
-            Ok(_) => {},
-            Err(_) => {},
+            Ok(_) => {}
+            Err(_) => {}
         }
     }
     println!();
@@ -395,6 +399,7 @@ fn main() {
         .with_resizable(true)
         .with_transparent(false)
         .with_min_inner_size(LogicalSize { width: 1280, height: 720 })
+        .with_visible(false)
         .build(&event_loop)
         .unwrap();
 
