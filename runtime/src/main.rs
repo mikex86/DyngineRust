@@ -3,7 +3,7 @@ use std::ops::Deref;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 use wgpu::SurfaceConfiguration;
-use winit::dpi::LogicalSize;
+use winit::dpi::{LogicalSize};
 use winit::event::{Event, WindowEvent};
 use winit::event_loop::{ControlFlow, EventLoop};
 use winit::window::{Window, WindowBuilder};
@@ -206,7 +206,7 @@ fn main() {
         .with_decorations(true)
         .with_resizable(true)
         .with_transparent(false)
-        .with_min_inner_size(LogicalSize { width: 720, height: 480 })
+        .with_min_inner_size(LogicalSize { width: 1280, height: 720 })
         .with_visible(false)
         .build(&event_loop)
         .unwrap();
