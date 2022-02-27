@@ -2,7 +2,8 @@ mod gui;
 mod i18n;
 
 use std::cell::RefCell;
-use std::iter;
+use std::{io, iter};
+use std::io::Write;
 use std::ops::Deref;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
@@ -57,7 +58,7 @@ async fn run(event_loop: EventLoop<ExampleEvent>, window: Window) {
         .await
         .expect("Failed to find an appropriate adapter");
 
-    let (device, mut queue);
+    let (device, queue);
     {
         let (d, q) = adapter
             .request_device(
@@ -70,7 +71,7 @@ async fn run(event_loop: EventLoop<ExampleEvent>, window: Window) {
             ).await
             .expect("Failed to create device");
         device = Rc::new(d);
-        queue = q;
+        queue = Rc::new(q);
     }
 
     let surface_format = surface.get_preferred_format(&adapter).unwrap();
@@ -83,7 +84,7 @@ async fn run(event_loop: EventLoop<ExampleEvent>, window: Window) {
         present_mode: wgpu::PresentMode::Mailbox,
     }));
 
-    let mut engine_instance = EngineInstance::new(device.clone(), surface_config.clone());
+    let mut engine_instance = EngineInstance::new(device.clone(), queue.clone(), surface_config.clone());
 
     fn create_multi_sampled_frame_buffer(device: &Device, size: &PhysicalSize<u32>, multi_sample_count: u32, surface_format: TextureFormat) -> TextureView {
         return device
@@ -211,19 +212,48 @@ async fn run(event_loop: EventLoop<ExampleEvent>, window: Window) {
             } => match event {
                 WindowEvent::Resized(size) => {
                     if size.width > 0 && size.height > 0 {
+                        let mut surface_config_mut = surface_config.borrow_mut();
                         // Resize surface
                         {
-                            let mut surface_config_mut = surface_config.borrow_mut();
                             surface_config_mut.width = size.width;
                             surface_config_mut.height = size.height;
+                            surface.configure(&device, surface_config_mut.deref());
                         }
-                        surface.configure(&device, surface_config.borrow_mut().deref());
 
                         // Resize multi sampled frame buffer
                         {
                             multisampled_frame_buffer = create_multi_sampled_frame_buffer(&device, &size, engine_instance.multisample_state.count, surface_format);
                         }
+
+                        // Resize engine
+                        {
+                            let scale_factor = window.scale_factor() as f32;
+                            let scaled_viewport_region = ViewportRegion {
+                                x: 0.0,
+                                y: 0.0,
+                                width: surface_config_mut.width as f32 * scale_factor,
+                                height: surface_config_mut.height as f32 * scale_factor,
+                            };
+                            engine_instance.resize(&scaled_viewport_region);
+                        }
                     }
+                }
+                WindowEvent::KeyboardInput { device_id, input, is_synthetic } => {
+                    match input.virtual_keycode {
+                        Some(key_code) => {
+                            engine_instance.handle_key_state(device_id, key_code, input.state, is_synthetic, last_frame_time.as_secs_f64());
+                        }
+                        None => {}
+                    }
+                }
+                WindowEvent::MouseInput { device_id, button, state, .. } => {
+                    engine_instance.handle_mouse_button_event(device_id, button, state, last_frame_time.as_secs_f64());
+                }
+                WindowEvent::MouseWheel { device_id, delta, phase, .. } => {
+                    engine_instance.handle_mouse_wheel(device_id, delta, phase, last_frame_time.as_secs_f64());
+                }
+                WindowEvent::CursorMoved { device_id, position, .. } => {
+                    engine_instance.handle_mouse_move(device_id, position, last_frame_time.as_secs_f64());
                 }
                 WindowEvent::CloseRequested => {
                     *control_flow = ControlFlow::Exit;
@@ -258,9 +288,9 @@ async fn run(event_loop: EventLoop<ExampleEvent>, window: Window) {
                         x: viewport_region.x * scale_factor,
                         y: viewport_region.y * scale_factor,
                         width: viewport_region.width * scale_factor,
-                        height: viewport_region.height * scale_factor
+                        height: viewport_region.height * scale_factor,
                     };
-                    engine_instance.render(&mut queue, &mut command_encoder, &viewport_view, Some(&multisampled_frame_buffer), &scaled_viewport_region);
+                    engine_instance.render(&mut command_encoder, &viewport_view, Some(&multisampled_frame_buffer), &scaled_viewport_region, last_frame_time.as_secs_f64());
                     queue.submit(Some(command_encoder.finish()));
                 }
 
@@ -337,12 +367,19 @@ async fn run(event_loop: EventLoop<ExampleEvent>, window: Window) {
 
 #[cfg(feature = "profile-with-optick")]
 fn wait_for_profiler() {
+    print!("Giving profiler time to attach");
     use std::thread::sleep;
     for _ in 0..100 {
+        print!(".");
         profiling::scope!("Wait for Optick...");
         sleep(Duration::from_millis(100));
         profiling::finish_frame!();
+        match io::stdout().flush() {
+            Ok(_) => {},
+            Err(_) => {},
+        }
     }
+    println!();
 }
 
 #[profiling::function]
@@ -350,7 +387,7 @@ fn main() {
     profiling::register_thread!("Engine");
 
     #[cfg(feature = "profile-with-optick")]
-        wait_for_profiler();
+    wait_for_profiler();
 
     let event_loop = EventLoop::with_user_event();
     let window = WindowBuilder::new()

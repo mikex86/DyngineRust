@@ -1,4 +1,6 @@
 use std::cell::RefCell;
+use std::io;
+use std::io::Write;
 use std::ops::Deref;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
@@ -25,7 +27,7 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
         .expect("Failed to find an appropriate adapter");
 
     let device;
-    let mut queue;
+    let queue;
     {
         let (d, q) = adapter
             .request_device(
@@ -38,7 +40,7 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
             ).await
             .expect("Failed to create device");
         device = Rc::new(d);
-        queue = q;
+        queue = Rc::new(q);
     }
 
     let surface_format = surface.get_preferred_format(&adapter).unwrap();
@@ -51,7 +53,7 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
         present_mode: wgpu::PresentMode::Mailbox,
     }));
 
-    let mut engine_instance = EngineInstance::new(device.clone(), surface_config.clone());
+    let mut engine_instance = EngineInstance::new(device.clone(), queue.clone(), surface_config.clone());
 
     engine_instance.start();
     surface.configure(&device, surface_config.borrow_mut().deref());
@@ -59,6 +61,7 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
     let mut last_frame_end = Instant::now();
     let mut last_frame_time = Duration::from_secs(0);
 
+    let mut frame = 0i64;
     event_loop.run(move |event, _, control_flow| {
         // event_loop.run never returns, therefore we must take ownership of the resources
         // to ensure the resources are properly cleaned up.
@@ -71,10 +74,43 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                 WindowEvent::Resized(size) => {
                     if size.width > 0 && size.height > 0 {
                         let mut surface_config_mut = surface_config.borrow_mut();
-                        surface_config_mut.width = size.width;
-                        surface_config_mut.height = size.height;
-                        surface.configure(&device, surface_config_mut.deref());
+
+                        // Resize surface to match window
+                        {
+                            surface_config_mut.width = size.width;
+                            surface_config_mut.height = size.height;
+                            surface.configure(&device, surface_config_mut.deref());
+                        }
+
+                        // Resize engine instance
+                        {
+                            let scale_factor = window.scale_factor() as f32;
+                            let scaled_viewport_region = ViewportRegion {
+                                x: 0.0,
+                                y: 0.0,
+                                width: surface_config_mut.width as f32 * scale_factor,
+                                height: surface_config_mut.height as f32 * scale_factor,
+                            };
+                            engine_instance.resize(&scaled_viewport_region);
+                        }
                     }
+                }
+                WindowEvent::KeyboardInput { device_id, input, is_synthetic } => {
+                    match input.virtual_keycode {
+                        Some(key_code) => {
+                            engine_instance.handle_key_state(device_id, key_code, input.state, is_synthetic, last_frame_time.as_secs_f64());
+                        }
+                        None => {}
+                    }
+                }
+                WindowEvent::MouseInput { device_id, button, state, .. } => {
+                    engine_instance.handle_mouse_button_event(device_id, button, state, last_frame_time.as_secs_f64());
+                }
+                WindowEvent::MouseWheel { device_id, delta, phase, .. } => {
+                    engine_instance.handle_mouse_wheel(device_id, delta, phase, last_frame_time.as_secs_f64());
+                }
+                WindowEvent::CursorMoved { device_id, position, .. } => {
+                    engine_instance.handle_mouse_move(device_id, position, last_frame_time.as_secs_f64());
                 }
                 WindowEvent::CloseRequested => {
                     *control_flow = ControlFlow::Exit;
@@ -105,26 +141,31 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                     );
 
                     let surface_config_mut = surface_config.borrow_mut();
-                    let viewport_region = ViewportRegion {
+
+                    let scale_factor = window.scale_factor() as f32;
+                    let scaled_viewport_region = ViewportRegion {
                         x: 0.0,
                         y: 0.0,
-                        width: surface_config_mut.width as f32,
-                        height: surface_config_mut.height as f32,
+                        width: surface_config_mut.width as f32 * scale_factor,
+                        height: surface_config_mut.height as f32 * scale_factor,
                     };
-                    engine_instance.render(&mut queue, &mut command_encoder, &viewport_view, None, &viewport_region);
+                    engine_instance.render(&mut command_encoder, &viewport_view, None, &scaled_viewport_region, last_frame_time.as_secs_f64());
                     queue.submit(Some(command_encoder.finish()));
                 }
 
                 output_frame.present();
 
-                if !last_frame_time.is_zero() {
-                    println!("FPS: {}", 1.0 / last_frame_time.as_secs_f32());
+                if !last_frame_time.is_zero() && frame % 600 == 0 {
+                    let fps = (1.0 / last_frame_time.as_secs_f32()) as i32;
+                    let fps_str = format!("Dyngine ({} FPS)", fps);
+                    window.set_title(&fps_str);
                 }
                 let now = Instant::now();
                 last_frame_time = now.duration_since(last_frame_end);
                 last_frame_end = now;
 
                 profiling::finish_frame!();
+                frame += 1;
             }
             Event::MainEventsCleared => {
                 window.request_redraw();
@@ -137,18 +178,24 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
 
 #[cfg(feature = "profile-with-optick")]
 fn wait_for_profiler() {
+    print!("Giving profiler time to attach");
     use std::thread::sleep;
-    use std::time::Duration;
     for _ in 0..100 {
+        print!(".");
         profiling::scope!("Wait for Optick...");
         sleep(Duration::from_millis(100));
         profiling::finish_frame!();
+        match io::stdout().flush() {
+            Ok(_) => {}
+            Err(_) => {}
+        }
     }
+    println!();
 }
 
 fn main() {
     #[cfg(feature = "profile-with-optick")]
-        wait_for_profiler();
+    wait_for_profiler();
 
     let event_loop = EventLoop::with_user_event();
     let window = WindowBuilder::new()

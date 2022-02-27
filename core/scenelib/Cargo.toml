@@ -7,4 +7,9 @@ edition = "2021"
 
 [dependencies]
 glam = "0.20.2"
+profiling = "1.0.5"
+wgpu = "0.12"
 bytemuck = { version = "1.4", features = [ "derive" ] }
+
+[features]
+profile-with-optick = ["profiling/profile-with-optick"]
