@@ -14,8 +14,8 @@ use winit::{
     event_loop::EventLoop,
     window::Window,
 };
-use winit::dpi::{LogicalSize, PhysicalPosition, PhysicalSize};
-use winit::event::{Event, WindowEvent};
+use winit::dpi::{LogicalSize, PhysicalSize};
+use winit::event::{DeviceEvent, Event, WindowEvent};
 use winit::event::Event::UserEvent;
 use winit::event_loop::ControlFlow;
 use winit::window::WindowBuilder;
@@ -253,18 +253,24 @@ async fn run(event_loop: EventLoop<ExampleEvent>, window: Window) {
                 WindowEvent::MouseWheel { device_id, delta, phase, .. } => {
                     engine_instance.borrow_mut().handle_mouse_wheel(device_id, delta, phase, last_frame_time.as_secs_f64());
                 }
-                WindowEvent::CursorMoved { device_id, position, .. } => {
-                    engine_instance.borrow_mut().handle_mouse_move(device_id, position, last_frame_time.as_secs_f64());
-                }
                 WindowEvent::Focused(focused) => {
                     window_has_focus = focused;
-                    egui_app.window_has_focus = focused;
+                    engine_instance.borrow_mut().window_state.set_focus(focused);
                 }
                 WindowEvent::CloseRequested => {
                     *control_flow = ControlFlow::Exit;
                 }
                 _ => {}
             }
+            Event::DeviceEvent {
+                event,
+                device_id,
+            } => match event {
+                DeviceEvent::MouseMotion { delta } => {
+                    engine_instance.borrow_mut().handle_mouse_motion(device_id, delta, last_frame_time.as_secs_f64());
+                }
+                _ => {}
+            },
             Event::RedrawRequested(..) => {
                 profiling::scope!("RedrawRequested");
 
@@ -286,7 +292,7 @@ async fn run(event_loop: EventLoop<ExampleEvent>, window: Window) {
                         window.set_cursor_grab(true).unwrap();
                         grabbed_cursor = true;
                     }
-                    window.set_cursor_position(PhysicalPosition::new(surface_config.borrow().width / 2, surface_config.borrow().height / 2)).unwrap();
+                    // window.set_cursor_position(PhysicalPosition::new(surface_config.borrow().width / 2, surface_config.borrow().height / 2)).unwrap();
                 } else {
                     if grabbed_cursor {
                         window.set_cursor_grab(false).unwrap();

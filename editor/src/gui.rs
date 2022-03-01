@@ -11,7 +11,6 @@ use dyngine_core::engine::{EngineInstance, ViewportRegion};
 pub struct EngineApp {
     engine_instance: Rc<RefCell<EngineInstance>>,
     translator: Rc<Translator>,
-    pub(crate) window_has_focus: bool,
     pub(crate) viewport_region: ViewportRegion,
     pub(crate) frame_time: Duration,
     pub(crate) fps_average_window: VecDeque<u32>,
@@ -22,7 +21,6 @@ impl EngineApp {
         return EngineApp {
             engine_instance,
             translator,
-            window_has_focus: false,
             viewport_region: ViewportRegion::ZERO,
             frame_time: Duration::new(0, 0),
             fps_average_window: VecDeque::new(),
@@ -33,6 +31,8 @@ impl EngineApp {
 impl epi::App for EngineApp {
     #[profiling::function]
     fn update(&mut self, ctx: &CtxRef, _frame: &epi::Frame) {
+        let engine_instance = self.engine_instance.borrow();
+
         // ctx.style() has transparent background
         // This is to avoid erasing transparency where it is needed. (eg. viewport)
         // Only when we are certain that the element we are rendering should in fact remove
@@ -131,7 +131,7 @@ impl epi::App for EngineApp {
                 let viewport_size_before_label = ui.available_size();
 
                 // Hide cursor
-                if self.engine_instance.borrow().should_grab_cursor() && self.window_has_focus {
+                if engine_instance.should_grab_cursor() && engine_instance.window_state.has_focus() {
                     ctx.output().cursor_icon = CursorIcon::None;
                 } else {
                     ctx.output().cursor_icon = CursorIcon::Default;

@@ -4,22 +4,42 @@ use std::rc::Rc;
 use glam::{Vec3A};
 use wgpu::{ColorTargetState, MultisampleState, Queue, RenderBundle, RenderBundleDescriptor, RenderBundleEncoderDescriptor, SurfaceConfiguration};
 use wgpu::{Color, CommandEncoder, Device};
-use winit::dpi::{PhysicalPosition};
 use winit::event::{DeviceId, ElementState, MouseButton, MouseScrollDelta, TouchPhase, VirtualKeyCode};
 use scenelib::camera::{Camera, CameraNode};
 use scenelib::scene::{StaticRenderState, RenderScene, RenderCallState};
 use crate::input::{InputHandler};
 
-struct EngineCoreState {
+pub struct EngineCoreState {
     render_pipeline: wgpu::RenderPipeline,
     triangle_render_bundle: RenderBundle,
     render_scene: RenderScene,
     input_handler: InputHandler,
 }
 
+pub struct WindowState {
+    has_focus: bool,
+}
+
+impl WindowState {
+    pub fn new() -> Self {
+        Self {
+            has_focus: false
+        }
+    }
+
+    pub fn has_focus(&self) -> bool {
+        self.has_focus
+    }
+
+    pub fn set_focus(&mut self, has_focus: bool) {
+        self.has_focus = has_focus;
+    }
+}
+
 pub struct EngineInstance {
     device: Rc<Device>,
     queue: Rc<Queue>,
+    pub window_state: WindowState,
     surface_config: Rc<RefCell<SurfaceConfiguration>>,
     color_target_state: ColorTargetState,
     pub multisample_state: MultisampleState,
@@ -49,6 +69,7 @@ impl EngineInstance {
         EngineInstance {
             device,
             queue,
+            window_state: WindowState::new(),
             surface_config,
             color_target_state: ColorTargetState {
                 format: surface_format,
@@ -151,7 +172,7 @@ impl EngineInstance {
             {
                 let mut speed = 2.0f32;
 
-                let handler_option = &mut engine_state.input_handler.get_primary();
+                let handler_option = &mut engine_state.input_handler.get_primary_keyboard();
 
                 match handler_option {
                     Some(handler) => {
@@ -254,7 +275,21 @@ impl EngineInstance {
     pub fn handle_mouse_wheel(&mut self, _device_id: DeviceId, _delta: MouseScrollDelta, _phase: TouchPhase, _delta_time: f64) {}
 
     #[profiling::function]
-    pub fn handle_mouse_move(&mut self, _device_id: DeviceId, _mouse_position: PhysicalPosition<f64>, _delta_time: f64) {}
+    pub fn handle_mouse_motion(&mut self, _device_id: DeviceId, mouse_delta: (f64, f64), _delta_time: f64) {
+        let engine_state: &mut EngineCoreState = self.engine_core_state.as_mut().unwrap();
+
+        // Hacky camera controller
+        // TODO: make this an ECS component when we have ECS
+        if self.window_state.has_focus() {
+            let mouse_sensitivity = 0.1f32;
+            let camera_node: &mut CameraNode = engine_state.render_scene.get_node_by_id(0).unwrap();
+            let yaw = camera_node.yaw();
+            let pitch = camera_node.pitch();
+
+            let (yaw_delta, pitch_deta) = mouse_delta;
+            camera_node.set_rotation(yaw + (-yaw_delta as f32 * mouse_sensitivity), pitch + (-pitch_deta as f32 * mouse_sensitivity));
+        }
+    }
 
     pub fn should_grab_cursor(&self) -> bool {
         return true;

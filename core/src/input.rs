@@ -1,11 +1,11 @@
 use std::collections::HashMap;
 use winit::event::{DeviceId, ElementState, VirtualKeyCode};
 
-pub(crate) struct DeviceInputHandler {
+pub(crate) struct KeyboardInputHandler {
     key_states: HashMap<VirtualKeyCode, ElementState>,
 }
 
-impl DeviceInputHandler {
+impl KeyboardInputHandler {
     pub(crate) fn new() -> Self {
         Self {
             key_states: HashMap::new(),
@@ -25,24 +25,24 @@ impl DeviceInputHandler {
 }
 
 pub(crate) struct InputHandler {
-    input_handlers: HashMap<DeviceId, DeviceInputHandler>,
+    keyboard_input_handlers: HashMap<DeviceId, KeyboardInputHandler>,
 }
 
 impl InputHandler {
     pub(crate) fn new() -> Self {
         Self {
-            input_handlers: HashMap::new(),
+            keyboard_input_handlers: HashMap::new(),
         }
     }
 
     pub(crate) fn set_key_pressed(&mut self, device_id: DeviceId, key: VirtualKeyCode, pressed: ElementState) {
-        self.input_handlers
+        self.keyboard_input_handlers
             .entry(device_id)
-            .or_insert(DeviceInputHandler::new())
+            .or_insert_with(|| KeyboardInputHandler::new())
             .set_key_pressed(key, pressed);
     }
 
-    pub(crate) fn get_primary(&mut self) -> Option<&mut DeviceInputHandler> {
-        return self.input_handlers.values_mut().next();
+    pub(crate) fn get_primary_keyboard(&mut self) -> Option<&mut KeyboardInputHandler> {
+        return self.keyboard_input_handlers.values_mut().next();
     }
 }
