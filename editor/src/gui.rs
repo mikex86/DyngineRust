@@ -2,7 +2,7 @@ use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::rc::Rc;
 use std::time::Duration;
-use egui::{Color32, CtxRef, CursorIcon, Frame, Pos2, Stroke, Style, Vec2};
+use egui::{Button, Color32, CtxRef, CursorIcon, Frame, Pos2, Stroke, Style, Vec2, WidgetText};
 use egui::{menu};
 use crate::i18n::Translator;
 
@@ -31,7 +31,7 @@ impl EngineApp {
 impl epi::App for EngineApp {
     #[profiling::function]
     fn update(&mut self, ctx: &CtxRef, _frame: &epi::Frame) {
-        let engine_instance = self.engine_instance.borrow();
+        let mut engine_instance = self.engine_instance.borrow_mut();
 
         // ctx.style() has transparent background
         // This is to avoid erasing transparency where it is needed. (eg. viewport)
@@ -147,7 +147,8 @@ impl epi::App for EngineApp {
                         self.fps_average_window.pop_front();
                     }
                     let fps_average = self.fps_average_window.iter().sum::<u32>() / self.fps_average_window.len() as u32;
-                    label_pos = ui.label(format!("FPS: {}", fps_average)).rect.min;
+                    let label = ui.label(format!("FPS: {}", fps_average));
+                    label_pos = label.rect.min;
                 } else {
                     label_pos = Pos2::ZERO;
                 }
@@ -156,6 +157,18 @@ impl epi::App for EngineApp {
                     y: label_pos.y,
                     width: viewport_size_before_label.x,
                     height: viewport_size_before_label.y,
+                };
+                let available_size_after_label = ui.available_size();
+                // Transparent dummy button in region of the viewport
+                {
+                    let viewport_dummy_button = Button::new(WidgetText::default());
+
+                    // hack to move cursor hack to place dummy button above FPS label
+                    ui.add_space(-(viewport_size_before_label.y - available_size_after_label.y));
+
+                    if ui.add_sized(viewport_size_before_label, viewport_dummy_button).clicked() {
+                        engine_instance.window_state.set_focus(true);
+                    }
                 }
             });
     }

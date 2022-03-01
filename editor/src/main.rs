@@ -15,7 +15,7 @@ use winit::{
     window::Window,
 };
 use winit::dpi::{LogicalSize, PhysicalSize};
-use winit::event::{DeviceEvent, Event, WindowEvent};
+use winit::event::{DeviceEvent, Event, VirtualKeyCode, WindowEvent};
 use winit::event::Event::UserEvent;
 use winit::event_loop::ControlFlow;
 use winit::window::WindowBuilder;
@@ -201,7 +201,6 @@ async fn run(event_loop: EventLoop<ExampleEvent>, window: Window) {
     window.set_visible(true); // Engine startup complete
 
     let mut grabbed_cursor = false;
-    let mut window_has_focus = false;
 
     event_loop.run(move |event, _, control_flow| {
         platform.handle_event(&event);
@@ -242,7 +241,14 @@ async fn run(event_loop: EventLoop<ExampleEvent>, window: Window) {
                 WindowEvent::KeyboardInput { device_id, input, is_synthetic } => {
                     match input.virtual_keycode {
                         Some(key_code) => {
-                            engine_instance.borrow_mut().handle_key_state(device_id, key_code, input.state, is_synthetic, last_frame_time.as_secs_f64());
+                            let mut engine_instance_mut = engine_instance.borrow_mut();
+
+                            // Engine editor escape check
+                            if key_code == VirtualKeyCode::Escape && engine_instance_mut.window_state.has_focus() {
+                                engine_instance_mut.window_state.set_focus(false);
+                            }
+
+                            engine_instance_mut.handle_key_state(device_id, key_code, input.state, is_synthetic, last_frame_time.as_secs_f64());
                         }
                         None => {}
                     }
@@ -254,8 +260,9 @@ async fn run(event_loop: EventLoop<ExampleEvent>, window: Window) {
                     engine_instance.borrow_mut().handle_mouse_wheel(device_id, delta, phase, last_frame_time.as_secs_f64());
                 }
                 WindowEvent::Focused(focused) => {
-                    window_has_focus = focused;
-                    engine_instance.borrow_mut().window_state.set_focus(focused);
+                    if !focused {
+                        engine_instance.borrow_mut().window_state.set_focus(false);
+                    }
                 }
                 WindowEvent::CloseRequested => {
                     *control_flow = ControlFlow::Exit;
@@ -287,7 +294,7 @@ async fn run(event_loop: EventLoop<ExampleEvent>, window: Window) {
 
                 // Grab cursor, if engine requests it
                 // Only grab/un-grab and center cursor (hiding is done by egui)
-                if engine_instance.borrow().should_grab_cursor() && window_has_focus {
+                if engine_instance.borrow().should_grab_cursor() && engine_instance.borrow().window_state.has_focus() {
                     if !grabbed_cursor {
                         window.set_cursor_grab(true).unwrap();
                         grabbed_cursor = true;

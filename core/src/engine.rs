@@ -17,6 +17,9 @@ pub struct EngineCoreState {
 }
 
 pub struct WindowState {
+
+    /// Whether the engine currently has focus.
+    /// When launched in edtior mode, this indicates whether the editor has focus.
     has_focus: bool,
 }
 
