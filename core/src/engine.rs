@@ -1,11 +1,10 @@
 use std::borrow::Cow;
 use std::cell::RefCell;
 use std::rc::Rc;
-use glam::{Vec3A};
 use wgpu::{ColorTargetState, MultisampleState, Queue, RenderBundle, RenderBundleDescriptor, RenderBundleEncoderDescriptor, SurfaceConfiguration};
 use wgpu::{Color, CommandEncoder, Device};
 use winit::event::{DeviceId, ElementState, MouseButton, MouseScrollDelta, TouchPhase, VirtualKeyCode};
-use scenelib::camera::{Camera, CameraNode};
+use scenelib::camera::CameraNode;
 use scenelib::scene::{StaticRenderState, RenderScene, RenderCallState};
 use crate::input::{InputHandler};
 
@@ -17,7 +16,6 @@ pub struct EngineCoreState {
 }
 
 pub struct WindowState {
-
     /// Whether the engine currently has focus.
     /// When launched in edtior mode, this indicates whether the editor has focus.
     has_focus: bool,
@@ -105,22 +103,15 @@ impl EngineInstance {
             });
         }
 
-        let mut render_scene = RenderScene::new(StaticRenderState {
-            device: self.device.clone(),
-            queue: self.queue.clone(),
-            bind_group_layouts: Vec::new(),
-        });
-
-        CameraNode::add_new(
-            0,
-            Camera::new(
-                Vec3A::new(0.0, 0.0, -5.0),
-                Vec3A::new(0.0, 0.0, 1.0),
-                70.0, 0.01, 1000.0, 1.0,
-                Vec3A::new(0.0, 1.0, 0.0),
-            ),
-            &mut render_scene,
-        );
+        let gltf_bytes = include_bytes!("../cres/assets/bd1.glb");
+        let render_scene = RenderScene::load_gltf(
+            StaticRenderState {
+                device: self.device.clone(),
+                queue: self.queue.clone(),
+                bind_group_layouts: Vec::new(),
+            },
+            gltf_bytes,
+        ).unwrap();
 
         let shader = self.device.create_shader_module(&wgpu::ShaderModuleDescriptor {
             label: None,

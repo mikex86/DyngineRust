@@ -1,8 +1,14 @@
+use Result;
 use std::any::Any;
 use std::collections::HashMap;
 use std::rc::Rc;
+
+use glam::{Vec3A, Quat};
+use gltf::camera::Projection;
 use wgpu::{Device, Queue, RenderPass};
 
+use crate::camera::CameraNode;
+use crate::camera::PerspectiveCamera;
 
 pub trait RenderNode {
     /// Returns whether this node is currently "dirty" and needs to be updated.
@@ -54,7 +60,7 @@ pub struct RenderScene {
 }
 
 impl RenderScene {
-    pub fn get_node_by_id<T: 'static>(&mut self, node_id: u64) -> Option<&mut T > where T: RenderNode {
+    pub fn get_node_by_id<T: 'static>(&mut self, node_id: u64) -> Option<&mut T> where T: RenderNode {
         //let mut node_box: &mut Box<dyn RenderNode> = self.nodes.get_mut(&node_id).unwrap();
         //let z = node_box.as_any_mut();
         //z.downcast_mut()
@@ -65,9 +71,61 @@ impl RenderScene {
     }
 }
 
+#[derive(Debug)]
+pub enum RenderSceneLoadingError {
+    GltfError(gltf::Error),
+}
+
 impl RenderScene {
     pub fn new(static_render_state: StaticRenderState) -> Self {
         RenderScene { nodes: HashMap::new(), static_render_state }
+    }
+
+    pub fn load_gltf(static_render_state: StaticRenderState, gltf_bytes: &[u8]) -> Result<RenderScene, RenderSceneLoadingError> {
+        match gltf::Gltf::from_slice(gltf_bytes) {
+            Ok(render_scene) => {
+                return RenderScene::parse_gltf(static_render_state, render_scene);
+            }
+            Err(error) => {
+                return Err(RenderSceneLoadingError::GltfError(error));
+            }
+        }
+    }
+
+    fn parse_gltf(static_render_state: StaticRenderState, gltf_object: gltf::Gltf) -> Result<RenderScene, RenderSceneLoadingError> {
+        let up_axis = Vec3A::new(0.0, 1.0, 0.0);
+        let mut render_scene = RenderScene::new(static_render_state);
+        for gltf_node in gltf_object.nodes() {
+            let (translation, rotation, _scale) = gltf_node.transform().decomposed();
+            let node_id = render_scene.nodes.len() as u64;
+
+            // if child is camera
+            let mut children = gltf_node.children();
+            if children.len() == 1 {
+                let camera_node = children.next().unwrap();
+                match camera_node.camera() {
+                    None => {}
+                    Some(gltf_camera) => {
+                        let camera_projection = gltf_camera.projection();
+                        match camera_projection {
+                            Projection::Perspective(gltf_perspective) => {
+                                let fov = gltf_perspective.yfov().to_degrees();
+                                let near = gltf_perspective.znear();
+                                let far = gltf_perspective.zfar();
+                                let rotation_quat = Quat::from_array(rotation);
+                                let direction = -(rotation_quat * up_axis);
+                                let camera = PerspectiveCamera::new(Vec3A::from(translation), Vec3A::from(direction), up_axis, fov, near, far, 1.0f32);
+                                CameraNode::add_new(node_id, camera, &mut render_scene);
+                            }
+                            _ => {
+                                panic!("Unsupported camera projection {:?}", camera_projection);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Ok(render_scene)
     }
 
     pub(crate) fn add_node(&mut self, node_id: u64, node: Box<dyn RenderNode>) {

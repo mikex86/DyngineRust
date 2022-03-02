@@ -13,7 +13,7 @@ pub struct CameraShaderState {
     view_proj: [[f32; 4]; 4],
 }
 
-pub struct Camera {
+pub struct PerspectiveCamera {
     // The camera's position.
     position: Vec3A,
     // The camera's direction.
@@ -31,23 +31,23 @@ pub struct Camera {
     // The camera's near plane.
     near: f32,
     // The camera's far plane.
-    far: f32,
+    far: Option<f32>,
     // Whether the camera's state has changed since last frame
     dirty: bool,
     // The state of the camera passed to the shader for vertex space transformation
     pub camera_shader_state: CameraShaderState,
 }
 
-impl Camera {
-    pub fn new(position: Vec3A, direction: Vec3A, fov: f32, near: f32, far: f32, aspect: f32, up_axis: Vec3A) -> Camera {
-        return Camera {
+impl PerspectiveCamera {
+    pub fn new(position: Vec3A, direction: Vec3A, up_axis: Vec3A, fov_degrees: f32, near: f32, far: Option<f32>, aspect: f32) -> PerspectiveCamera {
+        return PerspectiveCamera {
             position: position,
             direction: direction,
             right: up_axis.cross(direction),
             up_axis: up_axis,
             up: direction.cross(up_axis.cross(direction)),
             aspect: aspect,
-            fov: fov,
+            fov: fov_degrees.to_radians(),
             near: near,
             far: far,
             dirty: true,
@@ -70,7 +70,12 @@ impl Camera {
         let camera_up = self.direction.cross(self.right);
 
         let view_matrix = Mat4::look_at_lh(Vec3::from(self.position), Vec3::from(self.position + self.direction), Vec3::from(camera_up));
-        let projection_matrix = Mat4::perspective_lh(self.fov, self.aspect, self.near, self.far);
+
+        let projection_matrix = match self.far {
+            Some(far) => Mat4::perspective_lh(self.fov, self.aspect, self.near, far),
+            None => Mat4::perspective_infinite_lh(self.fov, self.aspect, self.near),
+        };
+
         self.camera_shader_state.view_proj = (projection_matrix * view_matrix).to_cols_array_2d();
         self.dirty = false;
     }
@@ -117,10 +122,10 @@ impl Camera {
     }
 
     pub fn set_far(&mut self, far: f32) {
-        if self.far == far {
+        if self.far == Some(far) {
             return;
         }
-        self.far = far;
+        self.far = Some(far);
         self.dirty = true;
     }
 
@@ -170,7 +175,7 @@ impl Camera {
     pub fn near(&self) -> f32 {
         self.near
     }
-    pub fn far(&self) -> f32 {
+    pub fn far(&self) -> Option<f32> {
         self.far
     }
     pub fn right(&self) -> Vec3A {
@@ -182,7 +187,7 @@ impl Camera {
 }
 
 pub struct CameraNode {
-    camera: Camera,
+    camera: PerspectiveCamera,
     camera_buffer: wgpu::Buffer,
     camera_bind_group: wgpu::BindGroup,
 }
@@ -212,7 +217,7 @@ impl RenderNode for CameraNode {
 }
 
 impl CameraNode {
-    pub fn add_new(node_id: u64, camera: Camera, scene: &mut RenderScene) {
+    pub fn add_new(node_id: u64, camera: PerspectiveCamera, scene: &mut RenderScene) {
         let render_context = &mut scene.static_render_state;
         let camera_buffer = render_context.device.create_buffer_init(
             &wgpu::util::BufferInitDescriptor {
@@ -312,7 +317,7 @@ impl CameraNode {
         return self.camera.near();
     }
 
-    pub fn far(&self) -> f32 {
+    pub fn far(&self) -> Option<f32> {
         return self.camera.far();
     }
 

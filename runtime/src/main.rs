@@ -3,7 +3,7 @@ use std::ops::Deref;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 use wgpu::SurfaceConfiguration;
-use winit::dpi::{LogicalSize, PhysicalPosition};
+use winit::dpi::{LogicalSize};
 use winit::event::{DeviceEvent, Event, WindowEvent};
 use winit::event_loop::{ControlFlow, EventLoop};
 use winit::window::{Window, WindowBuilder};
@@ -66,6 +66,7 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
     let mut grabbed_cursor = false;
 
     let mut window_has_focus = false;
+    let mut last_focused_time = Instant::now();
 
     event_loop.run(move |event, _, control_flow| {
         // event_loop.run never returns, therefore we must take ownership of the resources
@@ -117,6 +118,7 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                 WindowEvent::Focused(focused) => {
                     window_has_focus = focused;
                     engine_instance.window_state.set_focus(focused);
+                    last_focused_time = Instant::now();
                 }
                 WindowEvent::CloseRequested => {
                     *control_flow = ControlFlow::Exit;
@@ -128,6 +130,10 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                 device_id,
             } => match event {
                 DeviceEvent::MouseMotion { delta } => {
+                    // Prevent mouse jumping when window is focused
+                    if last_focused_time.elapsed().as_millis() < 50 {
+                        return;
+                    }
                     engine_instance.handle_mouse_motion(device_id, delta, last_frame_time.as_secs_f64());
                 }
                 _ => {}
@@ -229,7 +235,7 @@ fn wait_for_profiler() {
 
 fn main() {
     #[cfg(feature = "profile-with-optick")]
-    wait_for_profiler();
+        wait_for_profiler();
 
     let event_loop = EventLoop::with_user_event();
     let window = WindowBuilder::new()
