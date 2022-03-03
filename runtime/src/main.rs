@@ -67,6 +67,9 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
 
     let mut window_has_focus = false;
     let mut last_focused_time = Instant::now();
+    let mut last_window_moved = Instant::now();
+
+    let mut mouse_input_valid = false;
 
     event_loop.run(move |event, _, control_flow| {
         // event_loop.run never returns, therefore we must take ownership of the resources
@@ -120,6 +123,10 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                     engine_instance.window_state.set_focus(focused);
                     last_focused_time = Instant::now();
                 }
+                WindowEvent::Moved(_) => {
+                    last_window_moved = Instant::now();
+                    mouse_input_valid = false;
+                }
                 WindowEvent::CloseRequested => {
                     *control_flow = ControlFlow::Exit;
                 }
@@ -130,8 +137,7 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                 device_id,
             } => match event {
                 DeviceEvent::MouseMotion { delta } => {
-                    // Prevent mouse jumping when window is focused
-                    if last_focused_time.elapsed().as_millis() < 50 {
+                    if !mouse_input_valid {
                         return;
                     }
                     engine_instance.handle_mouse_motion(device_id, delta, last_frame_time.as_secs_f64());
@@ -152,19 +158,26 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                     }
                 };
 
-                // Grab cursor, if engine requests it
-                if engine_instance.should_grab_cursor() && window_has_focus {
-                    if !grabbed_cursor {
-                        window.set_cursor_grab(true).unwrap();
-                        window.set_cursor_visible(false);
-                        grabbed_cursor = true;
-                    }
-                    // window.set_cursor_position(PhysicalPosition::new(surface_config.borrow().width / 2, surface_config.borrow().height / 2)).unwrap();
-                } else {
-                    if grabbed_cursor {
-                        window.set_cursor_grab(false).unwrap();
-                        window.set_cursor_visible(true);
-                        grabbed_cursor = false;
+                // Prevent mouse jumping when window is focused/dragged
+                if !mouse_input_valid && last_window_moved.elapsed().as_millis().min(last_focused_time.elapsed().as_millis()) >= 50 {
+                    mouse_input_valid = true;
+                }
+
+                if mouse_input_valid {
+                    // Grab cursor, if engine requests it
+                    if engine_instance.should_grab_cursor() && window_has_focus {
+                        if !grabbed_cursor {
+                            window.set_cursor_grab(true).unwrap();
+                            window.set_cursor_visible(false);
+                            grabbed_cursor = true;
+                        }
+                        // window.set_cursor_position(PhysicalPosition::new(surface_config.borrow().width / 2, surface_config.borrow().height / 2)).unwrap();
+                    } else {
+                        if grabbed_cursor {
+                            window.set_cursor_grab(false).unwrap();
+                            window.set_cursor_visible(true);
+                            grabbed_cursor = false;
+                        }
                     }
                 }
 
