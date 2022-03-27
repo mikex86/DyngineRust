@@ -248,16 +248,22 @@ async fn run(event_loop: EventLoop<ExampleEvent>, window: Window) {
                                 engine_instance_mut.window_state.set_focus(false);
                             }
 
-                            engine_instance_mut.handle_key_state(device_id, key_code, input.state, is_synthetic, last_frame_time.as_secs_f64());
+                            if engine_instance_mut.window_state.has_focus() {
+                                engine_instance_mut.handle_key_state(device_id, key_code, input.state, is_synthetic, last_frame_time.as_secs_f64());
+                            }
                         }
                         None => {}
                     }
                 }
                 WindowEvent::MouseInput { device_id, button, state, .. } => {
-                    engine_instance.borrow_mut().handle_mouse_button_event(device_id, button, state, last_frame_time.as_secs_f64());
+                    if engine_instance.borrow_mut().window_state.has_focus() {
+                        engine_instance.borrow_mut().handle_mouse_button_event(device_id, button, state, last_frame_time.as_secs_f64());
+                    }
                 }
                 WindowEvent::MouseWheel { device_id, delta, phase, .. } => {
-                    engine_instance.borrow_mut().handle_mouse_wheel(device_id, delta, phase, last_frame_time.as_secs_f64());
+                    if engine_instance.borrow_mut().window_state.has_focus() {
+                        engine_instance.borrow_mut().handle_mouse_wheel(device_id, delta, phase, last_frame_time.as_secs_f64());
+                    }
                 }
                 WindowEvent::Focused(focused) => {
                     if !focused {
@@ -274,7 +280,9 @@ async fn run(event_loop: EventLoop<ExampleEvent>, window: Window) {
                 device_id,
             } => match event {
                 DeviceEvent::MouseMotion { delta } => {
-                    engine_instance.borrow_mut().handle_mouse_motion(device_id, delta, last_frame_time.as_secs_f64());
+                    if engine_instance.borrow_mut().window_state.has_focus() {
+                        engine_instance.borrow_mut().handle_mouse_motion(device_id, delta, last_frame_time.as_secs_f64());
+                    }
                 }
                 _ => {}
             },
@@ -324,7 +332,11 @@ async fn run(event_loop: EventLoop<ExampleEvent>, window: Window) {
                         width: viewport_region.width * scale_factor,
                         height: viewport_region.height * scale_factor,
                     };
-                    engine_instance.borrow_mut().render(&mut command_encoder, &viewport_view, Some(&multisampled_frame_buffer), &scaled_viewport_region, last_frame_time.as_secs_f64());
+
+                    let primary_camera = engine_instance.borrow_mut().engine_core_state.as_ref().unwrap().ecs_world.get_primary_camera().unwrap();
+                    let delta_time = last_frame_time.as_secs_f64();
+
+                    engine_instance.borrow_mut().render(&mut command_encoder, &viewport_view, Some(&multisampled_frame_buffer), &scaled_viewport_region, primary_camera, delta_time);
                     queue.submit(Some(command_encoder.finish()));
                 }
 

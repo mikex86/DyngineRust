@@ -1,8 +1,8 @@
 use std::any::Any;
 use std::f32::consts::PI;
-use glam::{Mat4, Vec3, Vec3A};
+use glam::{Mat4, Quat, Vec3, Vec3A};
 use wgpu::util::DeviceExt;
-use crate::scene::{StaticRenderState, RenderNode, RenderScene, RenderCallState};
+use crate::scene::{StaticRenderState, RenderNode, RenderScene, RenderCallState, RenderNodeHandle};
 
 // We need this for Rust to store our data correctly for the shaders
 #[repr(C)]
@@ -20,6 +20,8 @@ pub struct PerspectiveCamera {
     direction: Vec3A,
     // The camera's right vector.
     right: Vec3A,
+    // The camera's forward axis.
+    forward_axis: Vec3A,
     // The camera's up axis
     up_axis: Vec3A,
     // The camera's up vector
@@ -39,11 +41,12 @@ pub struct PerspectiveCamera {
 }
 
 impl PerspectiveCamera {
-    pub fn new(position: Vec3A, direction: Vec3A, up_axis: Vec3A, fov_degrees: f32, near: f32, far: Option<f32>, aspect: f32) -> PerspectiveCamera {
+    pub fn new(position: Vec3A, direction: Vec3A, forward_axis: Vec3A, up_axis: Vec3A, fov_degrees: f32, near: f32, far: Option<f32>, aspect: f32) -> PerspectiveCamera {
         return PerspectiveCamera {
             position: position,
             direction: direction,
             right: up_axis.cross(direction),
+            forward_axis: forward_axis,
             up_axis: up_axis,
             up: direction.cross(up_axis.cross(direction)),
             aspect: aspect,
@@ -57,7 +60,7 @@ impl PerspectiveCamera {
                     [1.0, 0.0, 0.0, 0.0],
                     [0.0, 1.0, 0.0, 0.0],
                     [0.0, 0.0, 1.0, 0.0],
-                    [0.0, 0.0, 0.0, 1.0]
+                    [0.0, 0.0, 0.0, 1.0],
                 ]
             },
         };
@@ -67,9 +70,8 @@ impl PerspectiveCamera {
         if !self.dirty {
             return;
         }
-        let camera_up = self.direction.cross(self.right);
 
-        let view_matrix = Mat4::look_at_lh(Vec3::from(self.position), Vec3::from(self.position + self.direction), Vec3::from(camera_up));
+        let view_matrix = Mat4::look_at_lh(Vec3::from(self.position), Vec3::from(self.position + self.direction), Vec3::from(self.up));
 
         let projection_matrix = match self.far {
             Some(far) => Mat4::perspective_lh(self.fov, self.aspect, self.near, far),
@@ -78,6 +80,15 @@ impl PerspectiveCamera {
 
         self.camera_shader_state.view_proj = (projection_matrix * view_matrix).to_cols_array_2d();
         self.dirty = false;
+    }
+
+    pub fn set_up_axis(&mut self, up_axis: Vec3A) {
+        if self.up_axis == up_axis {
+            return;
+        }
+        self.up_axis = up_axis;
+        self.up = self.direction.cross(self.up_axis.cross(self.direction));
+        self.dirty = true;
     }
 
     pub fn set_position(&mut self, position: Vec3A) {
@@ -94,6 +105,7 @@ impl PerspectiveCamera {
         }
         self.direction = direction;
         self.right = self.up_axis.cross(self.direction);
+        self.up = self.direction.cross(self.right.cross(self.direction));
         self.dirty = true;
     }
 
@@ -129,40 +141,51 @@ impl PerspectiveCamera {
         self.dirty = true;
     }
 
-    pub fn set_rotation(&mut self, yaw_degrees: f32, pitch_degrees: f32) {
+    pub fn set_rotation(&mut self, rotation: Quat) {
+        let direction = rotation * self.forward_axis;
+        let up = rotation * self.up_axis;
+        let right = up.cross(direction);
+
+        if self.direction != direction || self.up != up || self.right != right {
+            self.dirty = true;
+        }
+        self.direction = direction;
+        self.up = up;
+        self.right = right;
+    }
+
+    pub fn set_rotation_euler(&mut self, yaw_degrees: f32, pitch_degrees: f32) {
         self.direction.x = yaw_degrees.to_radians().cos() * pitch_degrees.to_radians().cos();
         self.direction.y = pitch_degrees.to_radians().sin();
         self.direction.z = yaw_degrees.to_radians().sin() * pitch_degrees.to_radians().cos();
         self.right = self.up_axis.cross(self.direction);
+        self.up = self.direction.cross(self.right);
         self.dirty = true;
     }
 
-    pub fn set_roll(&mut self, roll_degrees: f32) {
+    pub fn set_roll_euler(&mut self, roll_degrees: f32) {
         self.up_axis.x = roll_degrees.to_radians().cos();
         self.up_axis.y = roll_degrees.to_radians().sin();
         self.right = self.up_axis.cross(self.direction);
+        self.up = self.direction.cross(self.right);
         self.dirty = true;
     }
 
     pub fn yaw(&self) -> f32 {
         return self.direction.z.atan2(self.direction.x) * (180.0_f32 / PI);
     }
-
     pub fn pitch(&self) -> f32 {
         return self.direction.y.asin() * (180.0_f32 / PI);
     }
-
     pub fn roll(&self) -> f32 {
         return self.up_axis.y.atan2(self.up_axis.x) * (180.0_f32 / PI);
     }
-
     pub fn position(&self) -> Vec3A {
         self.position
     }
     pub fn direction(&self) -> Vec3A {
         self.direction
     }
-
     pub fn up_axis(&self) -> Vec3A {
         self.up_axis
     }
@@ -186,15 +209,39 @@ impl PerspectiveCamera {
     }
 }
 
-pub struct CameraNode {
+pub struct CameraRenderNode {
     camera: PerspectiveCamera,
     camera_buffer: wgpu::Buffer,
     camera_bind_group: wgpu::BindGroup,
+
+    /// State whether the camera is currently the camera being rendered from.
+    /// Only one camera can be rendered from at a time. This is used for split screen.
+    is_active_camera: bool,
+
+    dirty: bool,
 }
 
-impl RenderNode for CameraNode {
+impl CameraRenderNode {
+    pub fn set_active(&mut self) {
+        if self.is_active_camera {
+            return;
+        }
+        self.is_active_camera = true;
+        self.dirty = true;
+    }
+
+    pub fn set_inactive(&mut self) {
+        if !self.is_active_camera {
+            return;
+        }
+        self.is_active_camera = false;
+        self.dirty = true;
+    }
+}
+
+impl RenderNode for CameraRenderNode {
     fn is_dirty(&self) -> bool {
-        return self.camera.dirty;
+        return self.dirty || self.camera.dirty;
     }
 
     #[profiling::function]
@@ -203,8 +250,21 @@ impl RenderNode for CameraNode {
     }
 
     fn resolve_dirty_state(&mut self, static_render_state: &mut StaticRenderState) {
-        self.camera.update();
-        static_render_state.queue.write_buffer(&self.camera_buffer, 0, bytemuck::cast_slice(&[self.camera.camera_shader_state]));
+        let was_camera_dirty = self.camera.dirty;
+        let was_camera_render_node_dirty = self.dirty;
+        if self.camera.dirty {
+            self.camera.update();
+        }
+        if self.dirty {
+            self.dirty = false;
+        }
+        if self.is_active_camera {
+            if was_camera_dirty || was_camera_render_node_dirty {
+                // If the camera's state has changed OR this camera has just become the active camera, meaning that
+                // the contents of self.camera_buffer are some other camera's data, we need to update the camera buffer
+                static_render_state.queue.write_buffer(&self.camera_buffer, 0, bytemuck::cast_slice(&[self.camera.camera_shader_state]));
+            }
+        }
     }
 
     fn as_any(&self) -> &dyn Any {
@@ -216,8 +276,8 @@ impl RenderNode for CameraNode {
     }
 }
 
-impl CameraNode {
-    pub fn add_new(node_id: u64, camera: PerspectiveCamera, scene: &mut RenderScene) {
+impl CameraRenderNode {
+    pub fn add_new(camera: PerspectiveCamera, scene: &mut RenderScene) -> RenderNodeHandle {
         let render_context = &mut scene.static_render_state;
         let camera_buffer = render_context.device.create_buffer_init(
             &wgpu::util::BufferInitDescriptor {
@@ -252,25 +312,30 @@ impl CameraNode {
             label: Some("camera_bind_group"),
         });
         render_context.push_bind_group_layout(camera_bind_group_layout);
-        let camera_node = CameraNode {
+        let camera_node = CameraRenderNode {
             camera,
             camera_buffer,
             camera_bind_group,
+            is_active_camera: false,
+            dirty: false,
         };
-        scene.add_node(node_id, Box::new(camera_node));
+        return scene.add_node(Box::new(camera_node));
     }
-
 
     pub fn set_position(&mut self, position: Vec3A) {
         self.camera.set_position(position);
     }
 
-    pub fn set_rotation(&mut self, yaw_degrees: f32, pitch_degrees: f32) {
-        self.camera.set_rotation(yaw_degrees, pitch_degrees);
+    pub fn set_rotation(&mut self, quat: Quat) {
+        self.camera.set_rotation(quat);
     }
 
-    pub fn set_roll(&mut self, roll_degrees: f32) {
-        self.camera.set_roll(roll_degrees);
+    pub fn set_rotation_euler(&mut self, yaw_degrees: f32, pitch_degrees: f32) {
+        self.camera.set_rotation_euler(yaw_degrees, pitch_degrees);
+    }
+
+    pub fn set_roll_euler(&mut self, roll_degrees: f32) {
+        self.camera.set_roll_euler(roll_degrees);
     }
 
     pub fn yaw(&self) -> f32 {
@@ -327,6 +392,10 @@ impl CameraNode {
 
     pub fn set_fov(&mut self, fov: f32) {
         self.camera.set_fov(fov);
+    }
+
+    pub fn set_up_axis(&mut self, up_axis: Vec3A) {
+        self.camera.set_up_axis(up_axis);
     }
 
     pub fn set_near(&mut self, near: f32) {

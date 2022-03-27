@@ -1,18 +1,29 @@
 use std::borrow::Cow;
 use std::cell::RefCell;
 use std::rc::Rc;
+use glam::{EulerRot, Quat, Vec3A};
 use wgpu::{ColorTargetState, MultisampleState, Queue, RenderBundle, RenderBundleDescriptor, RenderBundleEncoderDescriptor, SurfaceConfiguration};
 use wgpu::{Color, CommandEncoder, Device};
 use winit::event::{DeviceId, ElementState, MouseButton, MouseScrollDelta, TouchPhase, VirtualKeyCode};
-use scenelib::camera::CameraNode;
-use scenelib::scene::{StaticRenderState, RenderScene, RenderCallState};
+use scenelib::camera::{CameraRenderNode};
+use scenelib::ecs::{CameraEntity, ECSEntityHandle, ECSWorld, MovementInput};
+use scenelib::scene::{StaticRenderState, RenderScene, RenderCallState, RenderNodeHandle};
 use crate::input::{InputHandler};
 
 pub struct EngineCoreState {
     render_pipeline: wgpu::RenderPipeline,
     triangle_render_bundle: RenderBundle,
     render_scene: RenderScene,
+    pub ecs_world: ECSWorld,
     input_handler: InputHandler,
+}
+
+impl EngineCoreState {
+    pub(crate) fn get_render_node_handle_by_ecs_handle(&self, entity_handle: &ECSEntityHandle) -> Option<&RenderNodeHandle> {
+        return self.ecs_world.get_entity(entity_handle)
+            .map(|entity| entity.get_render_node())
+            .flatten();
+    }
 }
 
 pub struct WindowState {
@@ -44,7 +55,8 @@ pub struct EngineInstance {
     surface_config: Rc<RefCell<SurfaceConfiguration>>,
     color_target_state: ColorTargetState,
     pub multisample_state: MultisampleState,
-    engine_core_state: Option<EngineCoreState>,
+    pub engine_core_state: Option<EngineCoreState>,
+    movement_input: MovementInput,
 }
 
 #[derive(Debug, PartialEq)]
@@ -83,6 +95,7 @@ impl EngineInstance {
                 alpha_to_coverage_enabled: false,
             },
             engine_core_state: None,
+            movement_input: MovementInput::new(),
         }
     }
 
@@ -103,15 +116,25 @@ impl EngineInstance {
             });
         }
 
-        let gltf_bytes = include_bytes!("../cres/assets/bd1.glb");
-        let render_scene = RenderScene::load_gltf(
-            StaticRenderState {
-                device: self.device.clone(),
-                queue: self.queue.clone(),
-                bind_group_layouts: Vec::new(),
-            },
-            gltf_bytes,
-        ).unwrap();
+        let mut ecs_world = ECSWorld::new();
+
+        let mut render_scene = RenderScene::new(StaticRenderState {
+            device: self.device.clone(),
+            queue: self.queue.clone(),
+            bind_group_layouts: Vec::new(),
+        });
+
+        CameraEntity::add_flying(
+            &mut ecs_world, &mut render_scene,
+            Vec3A::new(0.0, 0.0, -5.0),
+            Vec3A::new(0.0, 0.0, 1.0),
+            Vec3A::new(0.0, 0.0, 1.0),
+            Vec3A::new(0.0, 1.0, 0.0),
+            70.0,
+            0.01,
+            None,
+            1.0,
+        );
 
         let shader = self.device.create_shader_module(&wgpu::ShaderModuleDescriptor {
             label: None,
@@ -148,73 +171,57 @@ impl EngineInstance {
             multisample: self.multisample_state,
             multiview: None,
         });
-        self.engine_core_state = Some(EngineCoreState { render_pipeline, triangle_render_bundle, render_scene, input_handler: InputHandler::new() });
+        self.engine_core_state = Some(EngineCoreState { render_pipeline, triangle_render_bundle, render_scene, ecs_world: ecs_world, input_handler: InputHandler::new() });
+    }
+
+    /// Performs the pre-render phase of the engine.
+    /// This includes updating the ECS world.
+    /// [render_camera_ecs_handle] is the handle of the camera ECS entity to use for the render.
+    #[profiling::function]
+    fn pre_render(&mut self, delta_time: f64, render_camera_ecs_handle: ECSEntityHandle) {
+        let engine_state: &mut EngineCoreState = self.engine_core_state.as_mut().unwrap();
+
+        let render_camera_node_handle = engine_state.get_render_node_handle_by_ecs_handle(&render_camera_ecs_handle).unwrap().clone();
+        let render_scene = &mut engine_state.render_scene;
+
+        // Mark render_camera as the active camera.
+        {
+            render_scene.set_active_camera(&render_camera_node_handle);
+        }
+
+        // Input to movement_input
+        {
+            let input_handler = &mut engine_state.input_handler;
+            let primrary_keyboard_opt = input_handler.get_primary_keyboard();
+            if let Some(keyboard) = primrary_keyboard_opt {
+                self.movement_input.forward = keyboard.is_key_pressed(VirtualKeyCode::W);
+                self.movement_input.backward = keyboard.is_key_pressed(VirtualKeyCode::S);
+                self.movement_input.left = keyboard.is_key_pressed(VirtualKeyCode::A);
+                self.movement_input.right = keyboard.is_key_pressed(VirtualKeyCode::D);
+                self.movement_input.up = keyboard.is_key_pressed(VirtualKeyCode::Space);
+                self.movement_input.down = keyboard.is_key_pressed(VirtualKeyCode::LShift);
+            }
+        }
+
+        // Pre-render phase
+        // TODO: MOVE OFF RENDER THREAD
+        {
+            engine_state.ecs_world.update(delta_time, self.movement_input.clone(), render_scene);
+        }
+
+        self.movement_input.new_frame();
     }
 
     #[profiling::function]
-    pub fn render<'a, 'b: 'a>(&'b mut self, command_encoder: &'a mut CommandEncoder, surface_texture_view: &wgpu::TextureView, mutisampled_framebuffer: Option<&wgpu::TextureView>, viewport_region: &ViewportRegion, delta_time: f64) {
+    pub fn render<'a, 'b: 'a>(&'b mut self, command_encoder: &'a mut CommandEncoder, surface_texture_view: &wgpu::TextureView, mutisampled_framebuffer: Option<&wgpu::TextureView>, viewport_region: &ViewportRegion, render_camera_handle: ECSEntityHandle, delta_time: f64) {
         if viewport_region == &ViewportRegion::ZERO || self.engine_core_state.is_none() {
             return;
         }
 
+        // Pre-render phase (TODO: MOVE OFF RENDER THREAD)
+        self.pre_render(delta_time, render_camera_handle);
+
         let engine_state: &mut EngineCoreState = self.engine_core_state.as_mut().unwrap();
-
-        // Pre-rendering
-        {
-            // Hacky camera controller
-            // TODO: make this an ECS component when we have ECS
-            {
-                let mut speed = 2.0f32;
-
-                let handler_option = &mut engine_state.input_handler.get_primary_keyboard();
-
-                match handler_option {
-                    Some(handler) => {
-                        let camera_node: &mut CameraNode = engine_state.render_scene.get_node_by_id(0).unwrap();
-
-                        let mut move_forward = 0.0f32;
-                        let mut move_strafing = 0.0f32;
-                        let mut move_up = 0.0f32;
-
-                        if handler.is_key_pressed(VirtualKeyCode::LControl) {
-                            speed = 8.0f32;
-                        }
-
-                        // Get move_foward and move_strafing from input handler
-                        {
-                            if handler.is_key_pressed(VirtualKeyCode::W) {
-                                move_forward = 1.0f32;
-                            }
-                            if handler.is_key_pressed(VirtualKeyCode::S) {
-                                move_forward = -1.0f32;
-                            }
-                            if handler.is_key_pressed(VirtualKeyCode::A) {
-                                move_strafing = -1.0f32;
-                            }
-                            if handler.is_key_pressed(VirtualKeyCode::D) {
-                                move_strafing = 1.0f32;
-                            }
-                            if handler.is_key_pressed(VirtualKeyCode::Space) {
-                                move_up = 1.0f32;
-                            }
-                            if handler.is_key_pressed(VirtualKeyCode::LShift) {
-                                move_up = -1.0f32;
-                            }
-                        }
-                        if move_forward != 0.0f32 {
-                            camera_node.set_position(camera_node.position() + camera_node.direction() * (move_forward * speed * delta_time as f32));
-                        }
-                        if move_strafing != 0.0f32 {
-                            camera_node.set_position(camera_node.position() + camera_node.right() * (move_strafing * speed * delta_time as f32));
-                        }
-                        if move_up != 0.0f32 {
-                            camera_node.set_position(camera_node.position() + camera_node.up() * (move_up * speed * delta_time as f32));
-                        }
-                    }
-                    _ => {}
-                }
-            }
-        }
 
         // Begin rendering
         {
@@ -249,8 +256,12 @@ impl EngineInstance {
         }
 
         let engine_state: &mut EngineCoreState = self.engine_core_state.as_mut().unwrap();
-        {
-            let camera_node: &mut CameraNode = engine_state.render_scene.get_node_by_id(0).unwrap();
+        let ecs_world = &engine_state.ecs_world;
+        for camera_ecs_handle in ecs_world.get_cameras() {
+            let camera_rende_node_handle = ecs_world.get_entity(camera_ecs_handle).unwrap()
+                .get_render_node()
+                .unwrap();
+            let camera_node: &mut CameraRenderNode = engine_state.render_scene.get_node_by_id(camera_rende_node_handle).unwrap();
             camera_node.set_aspect(viewport_region.width as f32 / viewport_region.height as f32);
         }
     }
@@ -263,26 +274,22 @@ impl EngineInstance {
     }
 
     #[profiling::function]
-    pub fn handle_mouse_button_event(&mut self, _device_id: DeviceId, _mouse_button: MouseButton, _button_state: ElementState, _delta_time: f64) {}
+    pub fn handle_mouse_button_event(&mut self, _device_id: DeviceId, mouse_button: MouseButton, button_state: ElementState, _delta_time: f64) {
+        if button_state == ElementState::Pressed && mouse_button == MouseButton::Middle {
+            self.movement_input.should_roll = true;
+        } else if button_state == ElementState::Released && mouse_button == MouseButton::Middle {
+            self.movement_input.should_roll = false;
+        }
+    }
 
     #[profiling::function]
     pub fn handle_mouse_wheel(&mut self, _device_id: DeviceId, _delta: MouseScrollDelta, _phase: TouchPhase, _delta_time: f64) {}
 
     #[profiling::function]
     pub fn handle_mouse_motion(&mut self, _device_id: DeviceId, mouse_delta: (f64, f64), _delta_time: f64) {
-        let engine_state: &mut EngineCoreState = self.engine_core_state.as_mut().unwrap();
-
-        // Hacky camera controller
-        // TODO: make this an ECS component when we have ECS
-        if self.window_state.has_focus() {
-            let mouse_sensitivity = 0.1f32;
-            let camera_node: &mut CameraNode = engine_state.render_scene.get_node_by_id(0).unwrap();
-            let yaw = camera_node.yaw();
-            let pitch = camera_node.pitch();
-
-            let (yaw_delta, pitch_deta) = mouse_delta;
-            camera_node.set_rotation(yaw + (-yaw_delta as f32 * mouse_sensitivity), pitch + (-pitch_deta as f32 * mouse_sensitivity));
-        }
+        // TODO: CONFIGURABLE MOUSE SENSITIVITY
+        self.movement_input.delta_yaw += mouse_delta.0 as f32 / 1000.0;
+        self.movement_input.delta_pitch += mouse_delta.1 as f32 / 1000.0;
     }
 
     pub fn should_grab_cursor(&self) -> bool {

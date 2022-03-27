@@ -1,14 +1,10 @@
-use Result;
-use std::any::Any;
+use std::any::{Any, TypeId};
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use glam::{Vec3A, Quat};
-use gltf::camera::Projection;
 use wgpu::{Device, Queue, RenderPass};
-
-use crate::camera::CameraNode;
-use crate::camera::PerspectiveCamera;
+use crate::camera::CameraRenderNode;
+use crate::ecs::CameraEntity;
 
 pub trait RenderNode {
     /// Returns whether this node is currently "dirty" and needs to be updated.
@@ -28,7 +24,9 @@ pub trait RenderNode {
 
     /// Gets the render node out of the dirty state.
     /// Potentially expensive operation that rebuilds the resources affected by changed state of the node.
-    /// [static_render_state] contains static render state
+    /// This is called when the node is marked as dirty BUT this does NOT mean
+    /// the render node's dirty state is garanteed to be resolved in the next frame.
+    /// Eg. the dirty state is not resolved when the not is not visible. (TODO: this is not implemented yet)
     fn resolve_dirty_state(&mut self, static_render_state: &mut StaticRenderState);
 
     /// Allows downcast of the render node to a concrete implementation.
@@ -37,6 +35,9 @@ pub trait RenderNode {
     /// Allows mutable downcast of the render node to a concrete implementation.
     fn as_any_mut(&mut self) -> &mut dyn Any;
 }
+
+/// A type used to reference a render node in the scene.
+pub type RenderNodeHandle = u64;
 
 pub struct StaticRenderState {
     pub device: Rc<Device>,
@@ -55,81 +56,34 @@ impl StaticRenderState {
 }
 
 pub struct RenderScene {
-    pub nodes: HashMap<u64, Box<dyn RenderNode>>,
+    next_handle: RenderNodeHandle,
+    pub nodes: HashMap<RenderNodeHandle, Box<dyn RenderNode>>,
+    cameras: Vec<RenderNodeHandle>,
     pub static_render_state: StaticRenderState,
 }
 
 impl RenderScene {
-    pub fn get_node_by_id<T: 'static>(&mut self, node_id: u64) -> Option<&mut T> where T: RenderNode {
-        //let mut node_box: &mut Box<dyn RenderNode> = self.nodes.get_mut(&node_id).unwrap();
-        //let z = node_box.as_any_mut();
-        //z.downcast_mut()
-        return self.nodes.get_mut(&node_id).map(|node| {
+    pub fn get_node_by_id<T: 'static>(&mut self, node_handle: &RenderNodeHandle) -> Option<&mut T> where T: RenderNode {
+        return self.nodes.get_mut(node_handle).map(|node| {
             let node = node.as_any_mut();
             return node.downcast_mut::<T>();
         }).flatten();
     }
 }
 
-#[derive(Debug)]
-pub enum RenderSceneLoadingError {
-    GltfError(gltf::Error),
-}
-
 impl RenderScene {
     pub fn new(static_render_state: StaticRenderState) -> Self {
-        RenderScene { nodes: HashMap::new(), static_render_state }
+        RenderScene { next_handle: 1, nodes: HashMap::new(), cameras: Vec::new(), static_render_state }
     }
 
-    pub fn load_gltf(static_render_state: StaticRenderState, gltf_bytes: &[u8]) -> Result<RenderScene, RenderSceneLoadingError> {
-        match gltf::Gltf::from_slice(gltf_bytes) {
-            Ok(render_scene) => {
-                return RenderScene::parse_gltf(static_render_state, render_scene);
-            }
-            Err(error) => {
-                return Err(RenderSceneLoadingError::GltfError(error));
-            }
+    pub(crate) fn add_node<T: RenderNode + 'static>(&mut self, node: Box<T>) -> RenderNodeHandle {
+        if TypeId::of::<T>() != TypeId::of::<CameraRenderNode>() {
+            self.cameras.push(self.next_handle);
         }
-    }
-
-    fn parse_gltf(static_render_state: StaticRenderState, gltf_object: gltf::Gltf) -> Result<RenderScene, RenderSceneLoadingError> {
-        let up_axis = Vec3A::new(0.0, 1.0, 0.0);
-        let mut render_scene = RenderScene::new(static_render_state);
-        for gltf_node in gltf_object.nodes() {
-            let (translation, rotation, _scale) = gltf_node.transform().decomposed();
-            let node_id = render_scene.nodes.len() as u64;
-
-            // if child is camera
-            let mut children = gltf_node.children();
-            if children.len() == 1 {
-                let camera_node = children.next().unwrap();
-                match camera_node.camera() {
-                    None => {}
-                    Some(gltf_camera) => {
-                        let camera_projection = gltf_camera.projection();
-                        match camera_projection {
-                            Projection::Perspective(gltf_perspective) => {
-                                let fov = gltf_perspective.yfov().to_degrees();
-                                let near = gltf_perspective.znear();
-                                let far = gltf_perspective.zfar();
-                                let rotation_quat = Quat::from_array(rotation);
-                                let direction = -(rotation_quat * up_axis);
-                                let camera = PerspectiveCamera::new(Vec3A::from(translation), Vec3A::from(direction), up_axis, fov, near, far, 1.0f32);
-                                CameraNode::add_new(node_id, camera, &mut render_scene);
-                            }
-                            _ => {
-                                panic!("Unsupported camera projection {:?}", camera_projection);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        Ok(render_scene)
-    }
-
-    pub(crate) fn add_node(&mut self, node_id: u64, node: Box<dyn RenderNode>) {
-        self.nodes.insert(node_id, node);
+        let handle = self.next_handle;
+        self.nodes.insert(handle, node);
+        self.next_handle += 1;
+        return handle;
     }
 
     #[profiling::function]
@@ -139,6 +93,21 @@ impl RenderScene {
                 node.resolve_dirty_state(&mut self.static_render_state);
             }
             node.render(&mut self.static_render_state, render_call_state);
+        }
+    }
+
+    pub fn set_active_camera(&mut self, camera_handle: &RenderNodeHandle) {
+        {
+            let camera: &mut CameraRenderNode = self.get_node_by_id(camera_handle).unwrap();
+            camera.set_active();
+        }
+
+        let cameras = self.cameras.clone();
+        for camera_handle in &cameras {
+            if camera_handle != camera_handle {
+                let camera: &mut CameraRenderNode = self.get_node_by_id(camera_handle).unwrap();
+                camera.set_inactive();
+            }
         }
     }
 }
