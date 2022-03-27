@@ -331,7 +331,7 @@ impl<'a> System<'a> for FlyingCameraSystem {
                 } else {
                     rotation.roll += delta_yaw;
                 }
-                *rot_quat = Quat::from_euler(EulerRot::ZYX, rotation.roll, rotation.yaw, rotation.pitch);
+                *rot_quat = Quat::from_euler(EulerRot::YXZ, rotation.yaw, rotation.pitch, rotation.roll);
             }
 
             // Add movement input to velocity
